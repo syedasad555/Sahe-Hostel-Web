@@ -60,7 +60,7 @@ export default function Contact() {
     {
       icon: Mail,
       title: 'Email',
-      details: ['hostel@vrsiddhartha.ac.in', 'sahe.support@college.edu'],
+      details: ['sugirlshostels@gmail.com'],
       color: 'from-amber-400 to-amber-600',
     },
     {

@@ -1,5 +1,5 @@
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Menu, X, ArrowLeft } from 'lucide-react';
 import MealNotification from './components/MealNotification';
 import Hero from './components/Hero';
@@ -7,14 +7,26 @@ import About from './components/About';
 import Amenities from './components/Amenities';
 import Contact from './components/Contact';
 import Footer from './components/Footer';
-import StudentRegister from './components/Student';
-import FacultyPage from './pages/FacultyPage';
-import FacultyLoginPage from './pages/FacultyLoginPage';
-import StudentDetailsPage from './pages/StudentDetailsPage';
-import StudentLoginPage from './pages/StudentLoginPage';
-import MealSelectionPage from './pages/MealSelectionPage';
 import SimpleLayout from './layouts/SimpleLayout';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminProtectedRoute from './components/AdminProtectedRoute';
+
+const StudentRegister = lazy(() => import('./components/Student'));
+const FacultyPage = lazy(() => import('./pages/FacultyPage'));
+const FacultyLoginPage = lazy(() => import('./pages/FacultyLoginPage'));
+const StudentDetailsPage = lazy(() => import('./pages/StudentDetailsPage'));
+const StudentLoginPage = lazy(() => import('./pages/StudentLoginPage'));
+const MealSelectionPage = lazy(() => import('./pages/MealSelectionPage'));
+const AdminLoginPage = lazy(() => import('./pages/AdminLoginPage'));
+const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
+
+function PageLoader() {
+  return (
+    <div className="min-h-[50vh] flex items-center justify-center">
+      <div className="h-9 w-9 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+    </div>
+  );
+}
 
 const MAIN_NAV_ITEMS = [
   { id: 'home', label: 'Home' },
@@ -33,8 +45,16 @@ function Navigation() {
   const isStudentDetailsPage = location.pathname.startsWith('/students/');
 
   useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 10);
-    window.addEventListener('scroll', handleScroll);
+    let ticking = false;
+    const handleScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        setScrolled(window.scrollY > 10);
+        ticking = false;
+      });
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -172,13 +192,15 @@ function Navigation() {
                         </svg>
                         Back to Home
                       </button>
-                      <StudentRegister
-                        onBack={() => setShowStudentRegister(false)}
-                        onRegistered={() => {
-                          setShowStudentRegister(false);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                      />
+                      <Suspense fallback={<PageLoader />}>
+                        <StudentRegister
+                          onBack={() => setShowStudentRegister(false)}
+                          onRegistered={() => {
+                            setShowStudentRegister(false);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                        />
+                      </Suspense>
                     </div>
                   </div>
                 ) : (
@@ -205,38 +227,78 @@ function Navigation() {
 }
 
 function App() {
-  // Directly return the main app without preloader
   return (
     <div className="app">
-      <Routes>
-        <Route path="/students/:id" element={
-          <SimpleLayout>
-            <StudentDetailsPage />
-          </SimpleLayout>
-        } />
-        <Route path="/student/login" element={
-          <div className="min-h-screen bg-white">
-            <StudentLoginPage />
-          </div>
-        } />
-        <Route path="/meal-selection" element={
-          <div className="min-h-screen bg-white">
-            <MealSelectionPage />
-          </div>
-        } />
-        <Route path="/faculty" element={
-          <ProtectedRoute>
-            <div className="min-h-screen bg-white">
-              <FacultyPage />
-            </div>
-          </ProtectedRoute>
-        } />
-        <Route path="/*" element={
-          <div className="min-h-screen bg-white">
-            <Navigation />
-          </div>
-        } />
-      </Routes>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route
+            path="/students/:id"
+            element={
+              <SimpleLayout>
+                <StudentDetailsPage />
+              </SimpleLayout>
+            }
+          />
+          <Route
+            path="/student/login"
+            element={
+              <div className="min-h-screen bg-white">
+                <StudentLoginPage />
+              </div>
+            }
+          />
+          <Route
+            path="/meal-selection"
+            element={
+              <div className="min-h-screen bg-white">
+                <MealSelectionPage />
+              </div>
+            }
+          />
+          <Route
+            path="/faculty/login"
+            element={
+              <div className="min-h-screen bg-white">
+                <FacultyLoginPage />
+              </div>
+            }
+          />
+          <Route
+            path="/faculty"
+            element={
+              <ProtectedRoute>
+                <div className="min-h-screen bg-white">
+                  <FacultyPage />
+                </div>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/login"
+            element={
+              <div className="min-h-screen bg-white">
+                <AdminLoginPage />
+              </div>
+            }
+          />
+          <Route
+            path="/admin/dashboard"
+            element={
+              <AdminProtectedRoute>
+                <AdminDashboardPage />
+              </AdminProtectedRoute>
+            }
+          />
+          <Route
+            path="/*"
+            element={
+              <div className="min-h-screen bg-white">
+                <Navigation />
+              </div>
+            }
+          />
+        </Routes>
+      </Suspense>
     </div>
   );
 }

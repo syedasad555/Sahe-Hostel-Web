@@ -1,10 +1,11 @@
 import Student from '../models/Student.js';
 import OutingPermission from '../models/OutingPermission.js';
 import {
-  isTwilioConfigured,
+  getFast2smsConfigError,
+  isFast2smsConfigured,
   normalizeIndianMobileDigits,
-  sendTwilioSms,
-} from '../utils/twilio.js';
+  sendFast2sms,
+} from '../utils/fast2sms.js';
 
 function normalizeRoll(r) {
   return String(r ?? '').trim().toUpperCase();
@@ -130,11 +131,10 @@ export const lookupStudentByRoll = async (req, res) => {
 // @access  Faculty
 export const notifyOutingParents = async (req, res) => {
   try {
-    if (!isTwilioConfigured()) {
+    if (!isFast2smsConfigured()) {
       return res.status(503).json({
         success: false,
-        message:
-          'SMS is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER in server .env.',
+        message: getFast2smsConfigError() || 'SMS is not configured.',
       });
     }
 
@@ -230,12 +230,13 @@ export const notifyOutingParents = async (req, res) => {
       }
 
       try {
-        const sms = await sendTwilioSms(digits, message);
+        const sms = await sendFast2sms(digits, message);
         const data = sms.data ?? {};
+        const apiMessage = Array.isArray(data.message)
+          ? data.message.join(' ')
+          : data.message;
         const feedback = sms.ok
-          ? data.status
-            ? `Sent (${data.status})`
-            : 'Sent'
+          ? apiMessage || 'Sent'
           : sms.error || JSON.stringify(data);
 
         results.push({
@@ -246,11 +247,11 @@ export const notifyOutingParents = async (req, res) => {
           block,
           ok: sms.ok,
           feedback,
-          requestId: data.sid ?? data.request_id ?? data.requestId,
+          requestId: data.request_id ?? data.requestId ?? data.sid,
           httpStatus: sms.httpStatus,
         });
       } catch (err) {
-        console.error('Twilio SMS error:', err);
+        console.error('Fast2SMS error:', err);
         results.push({
           rollNumber: student.rollNumber,
           studentName: student.studentName,

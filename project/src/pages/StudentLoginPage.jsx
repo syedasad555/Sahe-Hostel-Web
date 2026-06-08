@@ -35,7 +35,6 @@ const StudentLoginPage = () => {
         }
       }
 
-      console.log('Attempting to log in with:', { rollNumber: rollNumber.trim().toUpperCase(), year });
       
       // Call the actual API to authenticate student
       const normalizedRoll = rollNumber.trim().toUpperCase();
@@ -53,7 +52,6 @@ const StudentLoginPage = () => {
       localStorage.setItem('studentName', student.studentName);
       localStorage.setItem('studentYear', student.year);
       
-      console.log('Login successful for:', student.studentName);
       
       // Redirect to meal selection page
       navigate('/meal-selection');

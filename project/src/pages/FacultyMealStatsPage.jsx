@@ -30,7 +30,6 @@ const FacultyMealStatsPage = ({
         return;
       }
 
-      console.log('Fetching faculty meal stats...');
 
       const response = await axios.get('/api/meals/stats', {
         headers: {
@@ -39,7 +38,6 @@ const FacultyMealStatsPage = ({
         },
       });
       
-      console.log('Faculty meal stats response:', response.data);
       
       setStats({
         veg: response.data.data.veg || 0,

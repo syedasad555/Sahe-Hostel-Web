@@ -5,15 +5,13 @@
  *   node scripts/resetFacultyPassword.js <email> <newPassword>
  *
  * Example:
- *   node scripts/resetFacultyPassword.js saheadmin2025@sahe.ac.in "MyNewSecurePass1!"
+ *   node scripts/resetFacultyPassword.js faculty@yourcollege.edu "MyNewSecurePass1!"
  *
  * Requires MONGODB_URI in .env (same as the main app).
  */
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
+import '../config/loadEnv.js';
 import Faculty from '../models/Faculty.js';
-
-dotenv.config();
 
 const [, , emailArg, newPasswordArg] = process.argv;
 
@@ -26,8 +24,8 @@ async function main() {
   const email = emailArg.trim().toLowerCase();
   const newPassword = newPasswordArg;
 
-  if (newPassword.length < 6) {
-    console.error('Password must be at least 6 characters.');
+  if (newPassword.length < 10) {
+    console.error('Password must be at least 10 characters.');
     process.exit(1);
   }
 

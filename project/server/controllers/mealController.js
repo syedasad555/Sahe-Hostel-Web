@@ -1,30 +1,53 @@
 import MealSelection from '../models/MealSelection.js';
 import Student from '../models/Student.js';
 import { sendMealReportEmail } from '../utils/emailService.js';
+import { isStudentOnOutgoingServicesList } from '../utils/outingEligibility.js';
 
-// Check if current time is within meal selection window
+const MEAL_BLOCKED_OUTING_MSG =
+  'You are on the Outgoing Services list and cannot select meals until you are removed from that list.';
+
+const MEAL_WINDOW_TZ = 'Asia/Kolkata';
+const MEAL_WINDOW_START_HOUR = 6;
+const MEAL_WINDOW_END_HOUR = 18; // 6:00 PM — window closes at 18:00
+const MEAL_SELECTION_DAYS = new Set([2, 6]); // Tuesday, Saturday
+
+function getMealWindowParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: MEAL_WINDOW_TZ,
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(date);
+
+  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const weekday = parts.find((p) => p.type === 'weekday')?.value;
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value);
+
+  return {
+    day: dayMap[weekday] ?? -1,
+    hour: Number.isFinite(hour) ? hour : -1,
+    minute: Number.isFinite(minute) ? minute : 0,
+  };
+}
+
+// Check if current time is within meal selection window (IST)
 export const isMealSelectionOpen = () => {
-  // TEMPORARILY DISABLED: Always return true for unrestricted meal selection
-  return true;
-  
-  // Original time restrictions (commented out for now)
-  const now = new Date();
-  const day = now.getDay(); // 0 is Sunday, 2 is Tuesday, 3 is Wednesday
-  const hours = now.getHours();
-  
-  // Tuesday 6 PM (18:00) to 11 PM (23:00)
-  if (day === 2 && hours >= 18 && hours < 23) return true;
-  
-  // Wednesday 6 AM (6:00) to 11 AM (11:00)
-  if (day === 3 && hours >= 6 && hours < 11) return true;
-  
-  return false;
+  if (process.env.MEAL_SELECTION_ALWAYS_OPEN === 'true') return true;
+
+  const { day, hour, minute } = getMealWindowParts();
+  if (!MEAL_SELECTION_DAYS.has(day)) return false;
+
+  const minutesSinceMidnight = hour * 60 + minute;
+  const start = MEAL_WINDOW_START_HOUR * 60;
+  const end = MEAL_WINDOW_END_HOUR * 60;
+  return minutesSinceMidnight >= start && minutesSinceMidnight < end;
 };
 
 // Submit meal selection
 export const submitMealSelection = async (req, res) => {
   try {
-    console.log('Submitting meal selection with data:', req.body);
     
     if (!isMealSelectionOpen()) {
       return res.status(400).json({ 
@@ -51,11 +74,18 @@ export const submitMealSelection = async (req, res) => {
       });
     }
 
+    if (await isStudentOnOutgoingServicesList(student.rollNumber)) {
+      return res.status(403).json({
+        success: false,
+        error: MEAL_BLOCKED_OUTING_MSG,
+        onOutgoingList: true,
+      });
+    }
+
     // Check if student has already made a selection for today
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    console.log('Checking for existing selection for student:', studentId, 'today:', today);
     
     const existingSelection = await MealSelection.findOne({
       studentId,
@@ -66,7 +96,6 @@ export const submitMealSelection = async (req, res) => {
     });
 
     if (existingSelection) {
-      console.log('Student already has a selection:', existingSelection);
       return res.status(400).json({ 
         success: false, 
         error: 'You have already made your meal selection for today.' 
@@ -80,11 +109,9 @@ export const submitMealSelection = async (req, res) => {
       date: new Date()
     });
 
-    console.log('Creating new meal selection:', mealSelection);
 
     await mealSelection.save();
 
-    console.log('Meal selection saved successfully:', mealSelection);
 
     res.status(201).json({ 
       success: true, 
@@ -115,6 +142,11 @@ export const checkMealSelection = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
+    const student = await Student.findById(studentId).select('rollNumber');
+    const onOutgoingList = student
+      ? await isStudentOnOutgoingServicesList(student.rollNumber)
+      : false;
+
     const existingSelection = await MealSelection.findOne({
       studentId,
       date: { 
@@ -127,7 +159,9 @@ export const checkMealSelection = async (req, res) => {
       success: true,
       data: {
         hasSelectedMeal: !!existingSelection,
-        selection: existingSelection
+        selection: existingSelection,
+        onOutgoingList,
+        canSelectMeal: !onOutgoingList,
       }
     });
   } catch (error) {
@@ -142,13 +176,10 @@ export const checkMealSelection = async (req, res) => {
 // Get meal statistics
 export const getMealStatistics = async (req, res) => {
   try {
-    console.log('Fetching meal statistics...');
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    console.log('Today date (midnight):', today);
-    console.log('Tomorrow date (midnight):', new Date(today.getTime() + 24 * 60 * 60 * 1000));
 
     const stats = await MealSelection.aggregate([
       {
@@ -167,7 +198,6 @@ export const getMealStatistics = async (req, res) => {
       }
     ]);
 
-    console.log('Aggregated stats:', stats);
 
     // Convert array to object for easier access
     const result = {
@@ -181,7 +211,6 @@ export const getMealStatistics = async (req, res) => {
       result.total += stat.count;
     });
 
-    console.log('Final result:', result);
 
     res.status(200).json({ 
       success: true, 

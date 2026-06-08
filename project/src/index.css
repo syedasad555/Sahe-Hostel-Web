@@ -10,6 +10,17 @@
   body {
     @apply font-sans antialiased;
   }
+
+  img {
+    content-visibility: auto;
+  }
+}
+
+@layer components {
+  .app {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 @layer utilities {

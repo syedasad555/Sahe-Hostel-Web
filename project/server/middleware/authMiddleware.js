@@ -73,4 +73,28 @@ const admin = (req, res, next) => {
   }
 };
 
-export { protect, protectFaculty, admin };
+const protectAdmin = async (req, res, next) => {
+  if (!req.headers.authorization?.startsWith('Bearer')) {
+    return res.status(401).json({ success: false, message: 'Not authorized, no token' });
+  }
+
+  try {
+    const token = req.headers.authorization.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (decoded.type !== 'admin' || decoded.role !== 'admin') {
+      return res.status(401).json({ success: false, message: 'Admin access required' });
+    }
+
+    req.admin = {
+      email: decoded.email,
+      role: 'admin',
+    };
+    return next();
+  } catch (error) {
+    console.error('protectAdmin:', error);
+    return res.status(401).json({ success: false, message: 'Not authorized, token failed' });
+  }
+};
+
+export { protect, protectFaculty, admin, protectAdmin };

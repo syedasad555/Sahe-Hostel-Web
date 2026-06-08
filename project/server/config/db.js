@@ -1,8 +1,6 @@
+import './loadEnv.js';
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
 import 'colors';
-
-dotenv.config();
 
 const connectDB = async () => {
   try {

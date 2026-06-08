@@ -10,6 +10,14 @@ const FacultyLoginPage = ({ onClose }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isHovered, setIsHovered] = useState(false);
+  const [showUpdateSection, setShowUpdateSection] = useState(false);
+  const [updateEmail, setUpdateEmail] = useState('');
+  const [updatePassword, setUpdatePassword] = useState('');
+  const [otpId, setOtpId] = useState('');
+  const [otpInput, setOtpInput] = useState('');
+  const [otpToken, setOtpToken] = useState('');
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState({ type: '', text: '' });
   const iconRef = useRef(null);
   const iconMoveRaf = useRef(null);
   const navigate = useNavigate();
@@ -55,6 +63,119 @@ const FacultyLoginPage = ({ onClose }) => {
       }
     };
   }, []);
+
+  const postJson = async (url, body) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(
+        'Server returned an invalid response. Ensure the backend is running on port 5000 and restart it after updates.'
+      );
+    }
+    if (!response.ok) {
+      throw new Error(data.message || 'Request failed');
+    }
+    return data;
+  };
+
+  const requestOtp = async () => {
+    setUpdateMsg({ type: '', text: '' });
+    setUpdateBusy(true);
+    try {
+      const changeEmail = !!updateEmail.trim();
+      const changePassword = !!updatePassword;
+
+      if (!email.trim() || !password) {
+        setUpdateMsg({ type: 'error', text: 'Enter your current email and password above first.' });
+        return;
+      }
+      if (!changeEmail && !changePassword) {
+        setUpdateMsg({ type: 'error', text: 'Enter a new email or password to update.' });
+        return;
+      }
+
+      const data = await postJson('/api/auth/faculty/otp/request', {
+        currentEmail: email.trim(),
+        currentPassword: password,
+        changeEmail,
+        changePassword,
+        newEmail: updateEmail.trim() || '',
+      });
+
+      setOtpId(data.otpId || '');
+      setOtpInput('');
+      setOtpToken('');
+      setUpdateMsg({ type: 'success', text: 'OTP sent. Enter the code below to verify.' });
+    } catch (err) {
+      setUpdateMsg({ type: 'error', text: err.message || 'OTP request failed.' });
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const verifyOtp = async () => {
+    setUpdateMsg({ type: '', text: '' });
+    setUpdateBusy(true);
+    try {
+      if (!otpId) throw new Error('Request an OTP first.');
+      if (!otpInput.trim()) throw new Error('Enter the OTP code.');
+
+      const data = await postJson('/api/auth/faculty/otp/verify', {
+        otpId,
+        otp: otpInput.trim(),
+      });
+
+      if (!data.otpToken) throw new Error('OTP verification failed.');
+      setOtpToken(data.otpToken);
+      setUpdateMsg({ type: 'success', text: 'OTP verified. You can apply changes.' });
+    } catch (err) {
+      setUpdateMsg({ type: 'error', text: err.message || 'OTP verification failed.' });
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const applyUpdates = async () => {
+    setUpdateMsg({ type: '', text: '' });
+    setUpdateBusy(true);
+    try {
+      const changeEmail = !!updateEmail.trim();
+      const changePassword = !!updatePassword;
+
+      if (!otpToken) throw new Error('Verify OTP before applying changes.');
+      if (!changeEmail && !changePassword) throw new Error('Nothing to update.');
+
+      await postJson('/api/auth/faculty/account/update', {
+        otpToken,
+        newEmail: changeEmail ? updateEmail.trim() : '',
+        newPassword: changePassword ? updatePassword : '',
+      });
+
+      if (changeEmail) setEmail(updateEmail.trim());
+      if (changePassword) setPassword(updatePassword);
+
+      setUpdateEmail('');
+      setUpdatePassword('');
+      setOtpId('');
+      setOtpInput('');
+      setOtpToken('');
+      setUpdateMsg({
+        type: 'success',
+        text: 'Credentials updated. Sign in with your new details.',
+      });
+    } catch (err) {
+      setUpdateMsg({ type: 'error', text: err.message || 'Update failed.' });
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -104,7 +225,7 @@ const FacultyLoginPage = ({ onClose }) => {
       ></div>
 
       {/* Popup Content */}
-      <div className="relative w-full max-w-md group">
+      <div className="relative w-full max-w-md max-h-[90vh] group">
         <button
           onClick={onClose}
           className="absolute -top-10 -right-2 p-2 text-slate-200 hover:bg-white/10 rounded-full transition-colors z-10"
@@ -113,7 +234,7 @@ const FacultyLoginPage = ({ onClose }) => {
           <X className="h-5 w-5" />
         </button>
 
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-100">
+        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-100 max-h-[90vh] flex flex-col">
           {/* Header */}
           <div className="relative bg-gradient-to-br from-slate-900 via-indigo-900 to-cyan-700 px-8 pt-12 pb-8 text-center">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.08),transparent_35%),radial-gradient(circle_at_80%_10%,rgba(255,255,255,0.08),transparent_25%)]"></div>
@@ -141,7 +262,7 @@ const FacultyLoginPage = ({ onClose }) => {
           </div>
 
           {/* Form */}
-          <div className="px-8 pt-8 pb-8 bg-white">
+          <div className="px-8 pt-8 pb-8 bg-white overflow-y-auto">
             {error && (
               <div className="mb-6 p-3 bg-rose-50 border border-rose-100 rounded-lg shadow-sm flex items-start space-x-2">
                 <span className="text-rose-500 text-sm font-semibold">!</span>
@@ -203,6 +324,104 @@ const FacultyLoginPage = ({ onClose }) => {
                 <p className="text-xs text-slate-500 text-center">Use your official faculty credentials to access the dashboard.</p>
               </div>
             </form>
+
+            <div className="mt-6 pt-6 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUpdateSection((v) => !v);
+                  setUpdateMsg({ type: '', text: '' });
+                }}
+                className="w-full text-sm font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+              >
+                {showUpdateSection ? 'Hide credential update' : 'Update email or password'}
+              </button>
+
+              {showUpdateSection ? (
+                <div className="mt-4 space-y-4">
+                  <p className="text-xs text-slate-500">
+                    Use your current email and password above. An OTP will be sent to the configured
+                    security inbox to confirm the change.
+                  </p>
+
+                  {updateMsg.text ? (
+                    <div
+                      className={`p-3 rounded-lg border text-sm ${
+                        updateMsg.type === 'success'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : updateMsg.type === 'error'
+                            ? 'bg-rose-50 text-rose-700 border-rose-100'
+                            : 'bg-slate-50 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {updateMsg.text}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium text-slate-700">New email</label>
+                      <input
+                        type="email"
+                        value={updateEmail}
+                        onChange={(e) => setUpdateEmail(e.target.value)}
+                        placeholder="Leave empty to keep current email"
+                        className={`mt-1.5 ${INPUT_CLASS}`}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-700">New password</label>
+                      <input
+                        type="password"
+                        value={updatePassword}
+                        onChange={(e) => setUpdatePassword(e.target.value)}
+                        placeholder="Leave empty to keep current password"
+                        className={`mt-1.5 ${INPUT_CLASS}`}
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={requestOtp}
+                    disabled={updateBusy}
+                    className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    {updateBusy ? 'Working…' : 'Send OTP'}
+                  </button>
+
+                  <div>
+                    <label className="text-xs font-medium text-slate-700">OTP code</label>
+                    <div className="mt-1.5 flex gap-2">
+                      <input
+                        type="text"
+                        value={otpInput}
+                        onChange={(e) => setOtpInput(e.target.value)}
+                        placeholder="Enter OTP"
+                        className={`flex-1 ${INPUT_CLASS}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={verifyOtp}
+                        disabled={updateBusy || !otpId}
+                        className="px-4 py-2.5 rounded-xl bg-slate-200 text-slate-900 text-sm font-semibold hover:bg-slate-300 disabled:opacity-60 whitespace-nowrap"
+                      >
+                        Verify
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={applyUpdates}
+                    disabled={updateBusy || !otpToken}
+                    className="w-full py-2.5 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 disabled:opacity-60"
+                  >
+                    Apply changes
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>

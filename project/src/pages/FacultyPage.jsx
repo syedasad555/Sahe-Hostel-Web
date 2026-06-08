@@ -25,6 +25,8 @@ const FacultyPage = () => {
     totalPages: 1
   });
   const [studentToDelete, setStudentToDelete] = useState(null);
+  const [bulkDeleteStudents, setBulkDeleteStudents] = useState(null);
+  const [selectedStudentIds, setSelectedStudentIds] = useState(() => new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const [csvFiles, setCsvFiles] = useState({
     rollNumbers: null,
@@ -35,29 +37,28 @@ const FacultyPage = () => {
   const [showPaymentCsvMenu, setShowPaymentCsvMenu] = useState(false);
   const [isDownloadingPaymentCsv, setIsDownloadingPaymentCsv] = useState(false);
 
-  const fetchStudents = useCallback(async () => {
+  const fetchStudents = useCallback(async (pageOverride) => {
     try {
       setLoading(true);
-      const { page, limit } = pagination;
+      const page = pageOverride ?? pagination.page;
+      const { limit } = pagination;
       const params = new URLSearchParams({
-        page,
-        limit,
+        page: String(page),
+        limit: String(limit),
         ...(searchTerm && { search: searchTerm }),
         ...(filters.branch && { branch: filters.branch }),
         ...(filters.paymentStatus && { paymentStatus: filters.paymentStatus })
       });
 
       const response = await axios.get(`/api/students?${params}`);
-      console.log('API Response:', response.data); // Debug log
-      console.log('First student data:', response.data.data[0]); // Log first student's data
       const { data, totalPages, currentPage, count } = response.data;
 
       setStudents(data);
-      setPagination(prev => ({
+      setPagination((prev) => ({
         ...prev,
         total: count,
         totalPages,
-        page: currentPage
+        page: currentPage,
       }));
     } catch (error) {
       console.error('Error fetching students:', error);
@@ -69,6 +70,10 @@ const FacultyPage = () => {
   useEffect(() => {
     fetchStudents();
   }, [fetchStudents]);
+
+  useEffect(() => {
+    setSelectedStudentIds(new Set());
+  }, [pagination.page]);
 
   /** Stay in sync when a student is deleted from the details page (same window or another tab) */
   useEffect(() => {
@@ -96,19 +101,87 @@ const FacultyPage = () => {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    fetchStudents();
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    fetchStudents(1);
   };
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    setFilters(prev => ({
+    setFilters((prev) => ({
       ...prev,
-      [name]: value
+      [name]: value,
     }));
+    setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
   const handleDeleteClick = (student) => {
     setStudentToDelete(student);
+  };
+
+  const toggleStudentRow = (id) => {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllStudentsOnPage = () => {
+    const ids = students.map((s) => s._id).filter(Boolean);
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = ids.length > 0 && ids.every((id) => next.has(id));
+      if (allSelected) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const handleBulkDeleteClick = () => {
+    const onPage = students.filter((s) => selectedStudentIds.has(s._id));
+    if (onPage.length === 0) return;
+    setBulkDeleteStudents(onPage);
+  };
+
+  const confirmBulkDelete = async () => {
+    if (!bulkDeleteStudents?.length) return;
+    setIsDeleting(true);
+    let deleted = 0;
+    let failed = 0;
+    try {
+      for (const student of bulkDeleteStudents) {
+        try {
+          const response = await axios.delete(`/api/students/${student._id}`, {
+            validateStatus: (status) => status < 500,
+          });
+          if (response.data?.success) {
+            deleted += 1;
+            try {
+              window.dispatchEvent(
+                new CustomEvent(STUDENT_DELETED_EVENT, { detail: { id: student._id } })
+              );
+            } catch (_) {
+              /* ignore */
+            }
+          } else {
+            failed += 1;
+          }
+        } catch {
+          failed += 1;
+        }
+      }
+      setSelectedStudentIds(new Set());
+      setBulkDeleteStudents(null);
+      await fetchStudents();
+      if (failed > 0) {
+        alert(`Deleted ${deleted} student(s). ${failed} could not be deleted.`);
+      } else {
+        alert(`Successfully deleted ${deleted} student record(s).`);
+      }
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const confirmDelete = async () => {
@@ -118,7 +191,6 @@ const FacultyPage = () => {
       setIsDeleting(true);
       const studentId = studentToDelete._id;
       const studentName = studentToDelete.studentName;
-      console.log('Attempting to delete student with ID:', studentId);
       
       // Store current state in case we need to revert
       const previousState = {
@@ -130,12 +202,10 @@ const FacultyPage = () => {
       setStudents(prev => prev.filter(student => student._id !== studentId));
       
       try {
-        console.log('Sending DELETE request to server...');
         const response = await axios.delete(`/api/students/${studentId}`, {
           validateStatus: status => status < 500 // Don't throw for 4xx/5xx responses
         });
 
-        console.log('Server response:', response.data);
 
         if (!response.data || !response.data.success) {
           throw new Error(response.data?.error || 'Failed to delete student');
@@ -511,7 +581,7 @@ const FacultyPage = () => {
                     <input
                       type="text"
                       className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 pr-12 sm:text-sm border-gray-300 rounded-md p-2 border"
-                      placeholder="Search by name..."
+                      placeholder="Search name, roll number, phone, email..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                     />
@@ -557,13 +627,23 @@ const FacultyPage = () => {
                     <option value="Not Done">Payment Pending</option>
                   </select>
 
+                  <button
+                    type="button"
+                    onClick={handleBulkDeleteClick}
+                    disabled={isDeleting || selectedStudentIds.size === 0}
+                    className="px-4 py-2 bg-red-600 text-white rounded-md text-sm hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {isDeleting ? 'Deleting…' : `Delete selected (${selectedStudentIds.size})`}
+                  </button>
+
                   <div className="relative">
                     <button
                       type="button"
                       onClick={() => setShowPaymentCsvMenu((prev) => !prev)}
                       disabled={isDownloadingPaymentCsv}
-                      className="pl-3 pr-10 py-2 border border-gray-300 rounded-md shadow-sm bg-white hover:bg-gray-50 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      className="pl-3 pr-4 py-2 border border-gray-300 rounded-md shadow-sm bg-white hover:bg-gray-50 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed flex items-center gap-2"
                     >
+                      <Download className="h-4 w-4 shrink-0" aria-hidden />
                       {isDownloadingPaymentCsv ? 'Downloading...' : 'Payment Status Excel'}
                     </button>
                     {showPaymentCsvMenu && (
@@ -602,6 +682,18 @@ const FacultyPage = () => {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all students on this page"
+                          checked={
+                            students.length > 0 &&
+                            students.every((s) => selectedStudentIds.has(s._id))
+                          }
+                          onChange={toggleSelectAllStudentsOnPage}
+                          disabled={loading || students.length === 0}
+                        />
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Name
                       </th>
@@ -628,13 +720,13 @@ const FacultyPage = () => {
                   <tbody className="bg-white divide-y divide-gray-200">
                     {loading ? (
                       <tr>
-                        <td colSpan="7" className="px-6 py-4 text-center">
+                        <td colSpan="8" className="px-6 py-4 text-center">
                           Loading...
                         </td>
                       </tr>
                     ) : students.length === 0 ? (
                       <tr>
-                        <td colSpan="7" className="px-6 py-4 text-center text-gray-500">
+                        <td colSpan="8" className="px-6 py-4 text-center text-gray-500">
                           No students found
                         </td>
                       </tr>
@@ -644,6 +736,14 @@ const FacultyPage = () => {
                           key={student._id}
                           className="hover:bg-gray-50 transition-colors duration-150"
                         >
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={selectedStudentIds.has(student._id)}
+                              onChange={() => toggleStudentRow(student._id)}
+                              aria-label={`Select ${student.studentName}`}
+                            />
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center">
                               <div className="flex-shrink-0 h-10 w-10">
@@ -814,14 +914,19 @@ const FacultyPage = () => {
       {/* Delete Confirmation Dialog */}
       <ConfirmationDialog
         isOpen={!!studentToDelete}
-        onClose={() => setStudentToDelete(null)}
+        onClose={() => !isDeleting && setStudentToDelete(null)}
         onConfirm={confirmDelete}
         title="Delete Student Record"
         message={`Are you sure you want to delete ${studentToDelete?.studentName || 'this student'}'s record? This action cannot be undone.`}
         isDeleteDialog
-        confirmText={isDeleting ? 'Deleting...' : 'Delete'}
-        confirmButtonStyle="bg-red-600 hover:bg-red-700"
-        cancelButtonStyle="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+      />
+      <ConfirmationDialog
+        isOpen={!!bulkDeleteStudents?.length}
+        onClose={() => !isDeleting && setBulkDeleteStudents(null)}
+        onConfirm={confirmBulkDelete}
+        title="Delete selected students"
+        message={`Permanently delete ${bulkDeleteStudents?.length ?? 0} selected student record(s)? This cannot be undone.`}
+        isDeleteDialog
       />
     </div>
   );
@@ -865,15 +970,30 @@ function formatOutingTimeDisplay(value) {
   }).format(d);
 }
 
-function OutingWhenCell({ value }) {
+function isOutingReturnExpired(outingIn) {
+  if (outingIn == null || outingIn === '') return false;
+  const end = new Date(outingIn);
+  if (Number.isNaN(end.getTime())) return false;
+  return end.getTime() < Date.now();
+}
+
+function OutingWhenCell({ value, overdue = false }) {
   const dateLine = formatOutingDateDisplay(value);
   const timeLine = formatOutingTimeDisplay(value);
-  if (dateLine === '—' && !timeLine) return <span className="text-gray-400">—</span>;
+  if (dateLine === '—' && !timeLine) {
+    return <span className={overdue ? 'text-red-500' : 'text-gray-400'}>—</span>;
+  }
   return (
     <div className="flex flex-col gap-0.5 leading-snug">
-      <span className="font-medium text-gray-900 tabular-nums">{dateLine}</span>
+      <span
+        className={`font-medium tabular-nums ${overdue ? 'text-red-800' : 'text-gray-900'}`}
+      >
+        {dateLine}
+      </span>
       {timeLine ? (
-        <span className="text-gray-600 tabular-nums">{timeLine}</span>
+        <span className={`tabular-nums ${overdue ? 'text-red-700' : 'text-gray-600'}`}>
+          {timeLine}
+        </span>
       ) : null}
     </div>
   );
@@ -897,6 +1017,18 @@ const emptyOutingRow = () => ({
 function outingMemberRowKey(permissionId, rollNumber) {
   const r = String(rollNumber ?? '').trim().toUpperCase();
   return `${String(permissionId)}:${encodeURIComponent(r)}`;
+}
+
+function outingRowMatchesSearch(row, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return true;
+  return (
+    String(row.rollNumber ?? '').toLowerCase().includes(q) ||
+    String(row.studentName ?? '').toLowerCase().includes(q) ||
+    String(row.studentPhone ?? '').toLowerCase().includes(q) ||
+    String(row.parentPhone ?? '').toLowerCase().includes(q) ||
+    String(row.block ?? '').toLowerCase().includes(q)
+  );
 }
 
 function parseOutingMemberRowKey(key) {
@@ -1007,8 +1139,10 @@ function OutgoingServicesPanel({ navigate }) {
         });
       }
     }
-    return items;
-  }, [permissions]);
+    const q = permissionsSearch.trim();
+    if (!q) return items;
+    return items.filter((row) => outingRowMatchesSearch(row, q));
+  }, [permissions, permissionsSearch]);
 
   useEffect(() => {
     if (phase !== 'list') {
@@ -1088,7 +1222,7 @@ function OutgoingServicesPanel({ navigate }) {
     });
   };
 
-  const deleteSelected = () => {
+  const deleteSelectedOutingMembers = () => {
     if (selectedRows.size === 0) return;
     const members = Array.from(selectedRows)
       .map((k) => parseOutingMemberRowKey(k))
@@ -1453,26 +1587,31 @@ function OutgoingServicesPanel({ navigate }) {
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900">Outgoing permissions</h2>
                   <p className="text-sm text-gray-600">
-                    Search and review permissions you created with SMS status.
+                    Search and review permissions you created with SMS status. 
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    value={permissionsSearch}
-                    onChange={(e) => setPermissionsSearch(e.target.value)}
-                    placeholder="Search roll, name, phone..."
-                    className="border border-gray-300 rounded-md px-3 py-2 text-sm w-56"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <form
+                    className="flex flex-wrap items-center gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
                       setPermissionsPage(1);
                       fetchPermissions(permissionsStatus, 1);
                     }}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700"
                   >
-                    Search
-                  </button>
+                    <input
+                      value={permissionsSearch}
+                      onChange={(e) => setPermissionsSearch(e.target.value)}
+                      placeholder="Search roll number, name, phone..."
+                      className="border border-gray-300 rounded-md px-3 py-2 text-sm w-56"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700"
+                    >
+                      Search
+                    </button>
+                  </form>
                   <select
                     value={permissionsStatus}
                     onChange={(e) => {
@@ -1489,11 +1628,11 @@ function OutgoingServicesPanel({ navigate }) {
                   </select>
                   <button
                     type="button"
-                    onClick={deleteSelected}
+                    onClick={deleteSelectedOutingMembers}
                     disabled={deleting || selectedRows.size === 0}
-                    className="px-4 py-2 bg-red-600 text-white rounded-md text-sm hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4 py-2 bg-red-600 text-white rounded-md text-sm hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                   >
-                    {deleting ? 'Removing…' : `Remove (${selectedRows.size})`}
+                    {deleting ? 'Removing…' : `Remove selected (${selectedRows.size})`}
                   </button>
 
                   <div className="relative">
@@ -1549,19 +1688,9 @@ function OutgoingServicesPanel({ navigate }) {
                         <input
                           type="checkbox"
                           onChange={(e) => {
-                            const visible = permissionRows()
-                              .filter((x) => {
-                                const q = permissionsSearch.trim().toLowerCase();
-                                if (!q) return true;
-                                return (
-                                  String(x.rollNumber).toLowerCase().includes(q) ||
-                                  String(x.studentName).toLowerCase().includes(q) ||
-                                  String(x.studentPhone).toLowerCase().includes(q) ||
-                                  String(x.parentPhone).toLowerCase().includes(q) ||
-                                  String(x.block).toLowerCase().includes(q)
-                                );
-                              })
-                              .map((x) => outingMemberRowKey(x.permissionId, x.rollNumber));
+                            const visible = permissionRows().map((x) =>
+                              outingMemberRowKey(x.permissionId, x.rollNumber)
+                            );
                             toggleSelectAllVisible(visible);
                           }}
                         />
@@ -1594,34 +1723,60 @@ function OutgoingServicesPanel({ navigate }) {
                       permissionRows()
                         .map((x) => {
                           const rowKey = outingMemberRowKey(x.permissionId, x.rollNumber);
+                          const overdue = isOutingReturnExpired(x.outingIn);
+                          const overdueTd =
+                            'px-4 py-3 text-sm align-top text-red-700 font-medium';
+                          const normalTd = 'px-4 py-3 text-sm align-top text-gray-700';
                           return (
-                          <tr key={rowKey} className="hover:bg-gray-50 align-top">
-                            <td className="px-4 py-3">
+                          <tr
+                            key={rowKey}
+                            className={
+                              overdue
+                                ? 'bg-red-50 hover:bg-red-100 align-top border-l-4 border-red-500'
+                                : 'hover:bg-gray-50 align-top'
+                            }
+                            title={
+                              overdue
+                                ? 'Return date/time has passed — student still on this list until you remove the record.'
+                                : undefined
+                            }
+                          >
+                            <td className={overdue ? overdueTd : normalTd}>
                               <input
                                 type="checkbox"
                                 checked={selectedRows.has(rowKey)}
                                 onChange={() => toggleRow(rowKey)}
                               />
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-700 align-top">
-                              <OutingWhenCell value={x.outingOut} />
+                            <td className={overdue ? overdueTd : normalTd}>
+                              <OutingWhenCell value={x.outingOut} overdue={overdue} />
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-700 align-top">
-                              <OutingWhenCell value={x.outingIn} />
+                            <td className={overdue ? `${overdueTd} font-semibold text-red-800` : normalTd}>
+                              <OutingWhenCell value={x.outingIn} overdue={overdue} />
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{x.rollNumber || '—'}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">{x.studentName || '—'}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{x.studentPhone || '—'}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{x.parentPhone || '—'}</td>
-                            <td className="px-4 py-3 text-sm text-gray-800 whitespace-nowrap">{x.block ? x.block : '—'}</td>
-                            <td className="px-4 py-3 text-sm max-w-[14rem]">
+                            <td
+                              className={`${overdue ? overdueTd : normalTd} whitespace-nowrap ${!overdue ? 'text-gray-900' : ''}`}
+                            >
+                              {x.rollNumber || '—'}
+                            </td>
+                            <td className={overdue ? overdueTd : normalTd}>{x.studentName || '—'}</td>
+                            <td className={`${overdue ? overdueTd : normalTd} whitespace-nowrap`}>
+                              {x.studentPhone || '—'}
+                            </td>
+                            <td className={`${overdue ? overdueTd : normalTd} whitespace-nowrap`}>
+                              {x.parentPhone || '—'}
+                            </td>
+                            <td className={`${overdue ? overdueTd : normalTd} whitespace-nowrap`}>
+                              {x.block ? x.block : '—'}
+                            </td>
+                            <td className={`${overdue ? overdueTd : normalTd} max-w-[14rem]`}>
                               {x.ok ? (
                                 <span className="text-green-700 font-semibold">Sent</span>
                               ) : (
                                 <div className="space-y-0.5">
                                   <span
                                     className="text-red-700 font-semibold cursor-help border-b border-dotted border-red-400"
-                                    title={x.feedback || 'SMS was not accepted by Twilio. Hover for details or check server logs.'}
+                                    title={x.feedback || 'SMS was not accepted by Fast2SMS. Hover for details or check server logs.'}
                                   >
                                     Failed
                                   </span>
@@ -1636,7 +1791,7 @@ function OutgoingServicesPanel({ navigate }) {
                                 </div>
                               )}
                             </td>
-                            <td className="px-4 py-3 text-right">
+                            <td className={`${overdue ? overdueTd : normalTd} text-right`}>
                               <button
                                 type="button"
                                 onClick={() =>

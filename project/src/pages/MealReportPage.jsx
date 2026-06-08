@@ -255,8 +255,8 @@ const MealReportPage = () => {
                 <dt className="text-sm font-medium text-gray-500">Selection Window</dt>
                 <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
                   <ul className="list-disc pl-5 space-y-1">
-                    <li>Tuesday: 6:00 PM - 11:00 PM</li>
-                    <li>Wednesday: 6:00 AM - 11:00 AM</li>
+                    <li>Tuesday: 6:00 AM – 6:00 PM (IST)</li>
+                    <li>Saturday: 6:00 AM – 6:00 PM (IST)</li>
                   </ul>
                 </dd>
               </div>

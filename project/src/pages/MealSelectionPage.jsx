@@ -10,48 +10,91 @@ const MealSelectionPage = () => {
   const [isSelectionOpen, setIsSelectionOpen] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [existingSelection, setExistingSelection] = useState(null);
+  const [onOutgoingList, setOnOutgoingList] = useState(false);
   const navigate = useNavigate();
 
-  // Check for existing meal selection when component mounts
+  const OUTING_BLOCK_MSG =
+    'You are in leave and cannot select meals until you are back to Hostel.';
+
+  // Check outing list + existing meal selection when component mounts
   useEffect(() => {
-    const checkExistingSelection = () => {
+    const load = async () => {
       const studentId = localStorage.getItem('studentId');
+      const token = localStorage.getItem('token');
       const today = new Date().toISOString().split('T')[0];
-      
+
       if (!studentId) {
-        setMessage({
-          type: 'error',
-          text: 'Please log in to select a meal.'
-        });
+        setMessage({ type: 'error', text: 'Please log in to select a meal.' });
+        setIsSelectionOpen(false);
         return;
       }
-      
+
+      if (token) {
+        try {
+          const { data } = await axios.get('/api/meals/check', {
+            params: { studentId },
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (data?.data?.onOutgoingList) {
+            setOnOutgoingList(true);
+            setIsSelectionOpen(false);
+            setMessage({ type: 'error', text: OUTING_BLOCK_MSG });
+            return;
+          }
+          if (data?.data?.hasSelectedMeal && data?.data?.selection?.mealType) {
+            setExistingSelection(data.data.selection.mealType);
+            setHasSubmitted(true);
+            setMessage({
+              type: 'info',
+              text: `You have already selected ${data.data.selection.mealType} meal for today.`,
+            });
+            setIsSelectionOpen(false);
+            return;
+          }
+        } catch (err) {
+          console.error('Meal check API error:', err);
+        }
+      }
+
       const storedSelection = localStorage.getItem(`mealSelection_${studentId}_${today}`);
-      
       if (storedSelection) {
         try {
-          const { mealType, timestamp } = JSON.parse(storedSelection);
+          const { mealType } = JSON.parse(storedSelection);
           setExistingSelection(mealType);
           setMessage({
             type: 'info',
-            text: `You have already selected ${mealType} meal for today.`
+            text: `You have already selected ${mealType} meal for today.`,
           });
           setHasSubmitted(true);
+          setIsSelectionOpen(false);
+          return;
         } catch (error) {
           console.error('Error parsing stored selection:', error);
-          // Clear invalid stored data
           localStorage.removeItem(`mealSelection_${studentId}_${today}`);
         }
       }
-      
-      // Keep selection open for demo purposes
+
+      try {
+        const { data: statusData } = await axios.get('/api/meals/status');
+        if (!statusData?.data?.isOpen) {
+          setIsSelectionOpen(false);
+          setMessage({ type: 'info', text: 'Meal selection is currently closed.' });
+          return;
+        }
+      } catch {
+        setIsSelectionOpen(false);
+        setMessage({ type: 'error', text: 'Could not verify meal selection hours.' });
+        return;
+      }
+
       setIsSelectionOpen(true);
     };
-    
-    checkExistingSelection();
+
+    load();
   }, []);
 
   const handleMealSelect = (mealType) => {
+    if (onOutgoingList) return;
     setSelectedMeal(mealType);
   };
 
@@ -66,6 +109,11 @@ const MealSelectionPage = () => {
         type: 'error',
         text: 'Please log in to select a meal.'
       });
+      return;
+    }
+
+    if (onOutgoingList) {
+      setMessage({ type: 'error', text: OUTING_BLOCK_MSG });
       return;
     }
     
@@ -112,9 +160,6 @@ const MealSelectionPage = () => {
       const studentId = localStorage.getItem('studentId');
       const token = localStorage.getItem('token');
       
-      console.log('Auth debug - Student ID:', studentId);
-      console.log('Auth debug - Token exists:', !!token);
-      console.log('Auth debug - Token format:', token ? token.substring(0, 20) + '...' : 'none');
       
       if (!studentId || !token) {
         console.error('Authentication failed - Missing credentials');
@@ -141,7 +186,6 @@ const MealSelectionPage = () => {
       }
       
       // Call the real API to submit meal selection
-      console.log('Submitting meal selection to API:', { studentId, selectedMeal });
       
       const response = await axios.post('/api/meals/select', 
         { studentId, mealType: selectedMeal },
@@ -153,7 +197,6 @@ const MealSelectionPage = () => {
         }
       );
       
-      console.log('Meal selection response:', response.data);
       
       setMessage({
         type: 'success',
@@ -187,9 +230,11 @@ const MealSelectionPage = () => {
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Select Your Meal</h2>
           <p className="text-gray-600">
-            {isSelectionOpen 
-              ? 'Please choose your meal option for today.'
-              : 'Meal selection is currently closed.'}
+            {onOutgoingList
+              ? 'Meal selection is not available while you are in leave.'
+              : isSelectionOpen
+                ? 'Please choose your meal option for today.'
+                : 'Meal selection is currently closed.'}
           </p>
         </div>
 
@@ -218,7 +263,7 @@ const MealSelectionPage = () => {
           </div>
         )}
 
-        {isSelectionOpen && (
+        {isSelectionOpen && !onOutgoingList && (
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <button
@@ -296,7 +341,7 @@ const MealSelectionPage = () => {
             Back to Home
           </button>
           <p className="text-xs text-center text-gray-500">
-            Meal selection is available on Tuesday (6:00 PM - 11:00 PM) and Wednesday (6:00 AM - 11:00 AM)
+            Meal selection is available every Tuesday and Saturday, 6:00 AM – 6:00 PM (IST)
           </p>
         </div>
       </div>

@@ -3,7 +3,6 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { processCsvUpload } from '../controllers/uploadController.js';
-import { testDatabaseConnection } from '../controllers/testController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,8 +39,5 @@ const upload = multer({
 
 // Route for CSV upload
 router.post('/csv', upload.single('csvFile'), processCsvUpload);
-
-// Test route for database connection
-router.get('/test', testDatabaseConnection);
 
 export default router;

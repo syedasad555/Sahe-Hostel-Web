@@ -1,23 +1,17 @@
-import nodemailer from 'nodemailer';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
-const transporter = nodemailer.createTransport({
-  service: 'gmail', // or your email service
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+import { getMailTransporter } from './mailTransport.js';
 
 export const sendMealReportEmail = async (report) => {
   try {
     const { veg, 'non-veg': nonVeg, total, date } = report;
-    
+    const reportTo = String(process.env.MEAL_REPORT_EMAIL || process.env.EMAIL_USER || '').trim();
+    if (!reportTo) {
+      throw new Error('MEAL_REPORT_EMAIL or EMAIL_USER must be set to send meal reports');
+    }
+
+    const transporter = await getMailTransporter();
     const mailOptions = {
       from: process.env.EMAIL_USER,
-      to: 'saheadmin2025@sahe.ac.in', // Faculty email
+      to: reportTo,
       subject: `Daily Meal Report - ${date.toDateString()}`,
       html: `
         <h2>Daily Meal Selection Report</h2>

@@ -5,7 +5,7 @@ import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { validateStudentNumber } from '../utils/csvValidation.js';
 import { validateRegistrationContacts } from '../utils/contactValidation.js';
-import { isTwilioConfigured, sendTwilioSms } from '../utils/twilio.js';
+import { isFast2smsConfigured, sendFast2sms } from '../utils/fast2sms.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,9 +21,9 @@ function buildParentRegistrationSms(student) {
 
 /** Non-blocking; failures are logged only (registration still succeeds). */
 function notifyParentRegistrationSms(studentDoc) {
-  if (!studentDoc?.parentPhone || !isTwilioConfigured()) return;
+  if (!studentDoc?.parentPhone || !isFast2smsConfigured()) return;
   const msg = buildParentRegistrationSms(studentDoc);
-  void sendTwilioSms(studentDoc.parentPhone, msg).then((r) => {
+  void sendFast2sms(studentDoc.parentPhone, msg).then((r) => {
     if (!r.ok) {
       console.warn(
         '[Registration SMS] Failed for parent phone:',
@@ -45,8 +45,6 @@ function parsePendingAmount(raw) {
 // @access  Public
 export const registerStudent = async (req, res) => {
   try {
-    console.log('Request body:', req.body);
-    console.log('Uploaded files:', req.files);
     
     // Extract all fields from request body
     const {
@@ -110,18 +108,11 @@ export const registerStudent = async (req, res) => {
     // Check if roll number already exists and update instead of failing
     let existingStudent = null;
     
-    console.log('Received rollNumber value:', JSON.stringify(rollNumber));
-    console.log('RollNumber type:', typeof rollNumber);
-    console.log('RollNumber trimmed:', rollNumber ? rollNumber.trim() : 'null/undefined');
-    console.log('Is N/A?', rollNumber === 'N/A');
-    console.log('Is empty?', rollNumber === '');
-    console.log('Year:', year);
     
     // Only check by roll number as primary key - no email checking
     if (rollNumber && rollNumber !== 'N/A' && rollNumber.trim() !== '') {
       existingStudent = await Student.findOne({ rollNumber: rollNumber });
       if (existingStudent) {
-        console.log('Student found by roll number, updating record:', existingStudent._id);
         
         // Update existing student by roll number (primary key)
         const updatedStudent = await Student.findByIdAndUpdate(
@@ -157,8 +148,6 @@ export const registerStudent = async (req, res) => {
           { new: true, runValidators: true }
         );
 
-        console.log('Student updated successfully by roll number:', updatedStudent._id);
-        console.log('Updated roll number:', updatedStudent.rollNumber);
 
         notifyParentRegistrationSms(updatedStudent);
 
@@ -172,54 +161,38 @@ export const registerStudent = async (req, res) => {
 
     // Validate roll number or administration number against CSV uploads
     const numberToValidate = rollNumber || 'N/A';
-    console.log('Starting validation for:', {
-      year,
-      numberToValidate,
-      isN_A: numberToValidate === 'N/A',
-      rollNumberProvided: !!rollNumber && rollNumber.trim() !== ''
-    });
     
     // For 1st year students, they should have administration numbers, not N/A
     if (year === '1st Year') {
       if (numberToValidate === 'N/A' || !numberToValidate || numberToValidate.trim() === '') {
-        console.log('1st Year validation failed: No administration number provided');
         return res.status(400).json({
           success: false,
           error: '1st Year students must provide an administration number (not N/A). Please contact faculty for your administration number.'
         });
       }
       // Validate administration number for 1st year students
-      console.log('Calling validateStudentNumber for 1st year with:', numberToValidate);
       const validation = await validateStudentNumber(year, numberToValidate);
-      console.log('1st Year validation result:', validation);
       
       if (!validation.isValid) {
-        console.log('1st Year validation FAILED - blocking registration');
         return res.status(400).json({
           success: false,
           error: validation.message
         });
       } else {
-        console.log('1st Year validation PASSED - allowing registration');
       }
     } else {
       // For 2nd, 3rd, 4th year students - skip validation if N/A, otherwise validate roll number
       if (numberToValidate === 'N/A') {
-        console.log('Skipping validation for N/A roll number (senior student)');
       } else {
         // Validate roll number for senior students
-        console.log('Calling validateStudentNumber for senior student with:', numberToValidate);
         const validation = await validateStudentNumber(year, numberToValidate);
-        console.log('Senior student validation result:', validation);
         
         if (!validation.isValid) {
-          console.log('Senior student validation FAILED - blocking registration');
           return res.status(400).json({
             success: false,
             error: validation.message
           });
         } else {
-          console.log('Senior student validation PASSED - allowing registration');
         }
       }
     }
@@ -227,7 +200,6 @@ export const registerStudent = async (req, res) => {
     // Handle file uploads
     const fileData = {};
     if (req.files) {
-      console.log('Processing files:', Object.keys(req.files));
       
       const fileFields = [
         'studentPhoto',
@@ -239,10 +211,8 @@ export const registerStudent = async (req, res) => {
       
       fileFields.forEach(field => {
         if (req.files[field] && req.files[field][0]) {
-          console.log(`Processing ${field}:`, req.files[field][0]);
           fileData[field] = req.files[field][0].filename;
         } else if (field !== 'paymentReceipt') { // paymentReceipt is optional
-          console.log(`No file found for required field: ${field}`);
           if (field !== 'paymentReceipt') {
             return res.status(400).json({
               success: false,
@@ -286,11 +256,8 @@ export const registerStudent = async (req, res) => {
       ...fileData
     };
 
-    console.log('Creating student with data:', JSON.stringify(studentData, null, 2));
-    console.log('Roll number being saved:', studentData.rollNumber);
     
     const student = await Student.create(studentData);
-    console.log('Student created successfully:', student._id);
 
     notifyParentRegistrationSms(student);
 
@@ -316,9 +283,16 @@ export const getStudents = async (req, res) => {
     const { search, branch, paymentStatus, page = 1, limit = 20 } = req.query;
     const query = {};
 
-    // Search by name
+    // Search by name, roll number, phone, or email
     if (search) {
-      query.studentName = { $regex: search, $options: 'i' };
+      const term = String(search).trim();
+      const rx = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [
+        { studentName: rx },
+        { rollNumber: rx },
+        { phone: rx },
+        { email: rx },
+      ];
     }
 
     // Filter by branch
@@ -337,7 +311,6 @@ export const getStudents = async (req, res) => {
       .skip((page - 1) * limit)
       .select('studentName phone branch paymentStatus pendingAmount rollNumber year');
     
-    console.log('Students with years:', students.map(s => ({ name: s.studentName, year: s.year })));
 
     const count = await Student.countDocuments(query);
 
@@ -388,21 +361,18 @@ export const getStudent = async (req, res) => {
 // @route   DELETE /api/students/:id
 // @access  Private
 export const deleteStudent = async (req, res) => {
-  console.log('Delete request received for student ID:', req.params.id);
   
   try {
     // First try to find and delete the student in one operation
     const deletedStudent = await Student.findByIdAndDelete(req.params.id);
     
     if (!deletedStudent) {
-      console.log('Student not found with ID:', req.params.id);
       return res.status(404).json({ 
         success: false,
         error: 'Student not found' 
       });
     }
 
-    console.log('Successfully deleted student from database');
 
     // Delete files if they exist (only if student was found and deleted)
     const deleteFile = (filePath) => {
@@ -411,7 +381,6 @@ export const deleteStudent = async (req, res) => {
           const fullPath = path.join(process.cwd(), filePath);
           if (fs.existsSync(fullPath)) {
             fs.unlinkSync(fullPath);
-            console.log('Deleted file:', fullPath);
           }
         } catch (fileError) {
           console.error('Error deleting file:', fileError);
@@ -448,7 +417,6 @@ export const deleteStudent = async (req, res) => {
 // @access  Public
 export const loginStudent = async (req, res) => {
   try {
-    console.log('Student login attempt:', req.body);
     
     const { rollNumber, year } = req.body;
 
@@ -471,7 +439,6 @@ export const loginStudent = async (req, res) => {
     }
 
     // Find student by roll number and year
-    console.log('Searching for student with rollNumber:', rollNumber, 'and year:', year);
     
     const student = await Student.findOne({ 
       rollNumber: rollNumber.trim(),
@@ -479,14 +446,12 @@ export const loginStudent = async (req, res) => {
     });
 
     if (!student) {
-      console.log('Student not found with rollNumber:', rollNumber, 'and year:', year);
       return res.status(401).json({
         success: false,
         message: 'Invalid roll/administration number or year. Please check your credentials and try again.'
       });
     }
 
-    console.log('Student found:', student.studentName, 'Roll:', student.rollNumber, 'Year:', student.year);
 
     // Create a proper JWT token
     const token = jwt.sign(
@@ -529,7 +494,6 @@ export const loginStudent = async (req, res) => {
 // @access  Public
 export const verifyStudent = async (req, res) => {
   try {
-    console.log('Verification request received:', req.query);
     const { email, phone } = req.query;
 
     if (!email || !phone) {

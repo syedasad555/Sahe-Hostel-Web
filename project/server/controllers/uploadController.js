@@ -43,11 +43,6 @@ export const processCsvUpload = async (req, res) => {
           }
 
           // Save to database
-          console.log('Saving to database:', {
-            type,
-            numbersCount: processedData.map(item => item.rollNumber || item.adminNumber).length,
-            firstFewNumbers: processedData.map(item => item.rollNumber || item.adminNumber).slice(0, 5)
-          });
 
           const result = await CSVUpload.findOneAndUpdate(
             { type, isActive: true },
@@ -60,7 +55,6 @@ export const processCsvUpload = async (req, res) => {
             { upsert: true, new: true }
           );
 
-          console.log('Database save result:', result);
 
           // Clean up uploaded file
           fs.unlinkSync(filePath);

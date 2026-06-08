@@ -1,5 +1,5 @@
+import './config/loadEnv.js';
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,10 +10,8 @@ import authRoutes from './routes/authRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
 import complaintRoutes from './routes/complaintRoutes.js';
 import outingRoutes from './routes/outingRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import scheduleMealReportEmails from './utils/scheduler.js';
-
-// Load environment variables
-dotenv.config();
 
 // Connect to database
 connectDB();
@@ -57,6 +55,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/complaints', complaintRoutes);
 app.use('/api/outing', outingRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {

@@ -3,7 +3,6 @@ import CSVUpload from '../models/CSVUpload.js';
 // Validate roll number or administration number against uploaded CSV files
 export const validateStudentNumber = async (year, rollNumber) => {
   try {
-    console.log('Starting validation for:', { year, rollNumber });
     
     let csvType;
     let numberField;
@@ -17,7 +16,6 @@ export const validateStudentNumber = async (year, rollNumber) => {
       numberField = 'roll number';
     }
     
-    console.log('Looking for CSV upload:', { csvType, numberField });
     
     // Find the active CSV upload for this type
     const csvUpload = await CSVUpload.findOne({ 
@@ -25,14 +23,7 @@ export const validateStudentNumber = async (year, rollNumber) => {
       isActive: true 
     });
     
-    console.log('CSV upload found:', csvUpload ? 'Yes' : 'No');
     if (csvUpload) {
-      console.log('CSV upload details:', {
-        type: csvUpload.type,
-        numbersCount: csvUpload.numbers.length,
-        firstFewNumbers: csvUpload.numbers.slice(0, 5),
-        isActive: csvUpload.isActive
-      });
     }
     
     if (!csvUpload) {
@@ -44,7 +35,6 @@ export const validateStudentNumber = async (year, rollNumber) => {
     
     // Check if the number exists in the uploaded CSV
     const numberExists = csvUpload.numbers.includes(rollNumber);
-    console.log('Number exists check:', { rollNumber, numberExists });
     
     if (!numberExists) {
       return {

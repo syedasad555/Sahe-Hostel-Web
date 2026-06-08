@@ -24,9 +24,6 @@ const storage = multer.diskStorage({
 
 const fileFilter = (req, file, cb) => {
   try {
-    console.log('Processing file:', file.originalname, 'Mimetype:', file.mimetype);
-    
-    // Allow all file types for now to debug
     cb(null, true);
     
     // If you want to re-enable filtering later, uncomment this:

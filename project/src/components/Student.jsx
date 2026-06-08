@@ -561,7 +561,6 @@ const StudentRegister = ({ onRegistered }) => {
         formDataToSend.append('aadharCard', files.aadharCard);
       }
 
-      console.log('Submitting form data:', Object.fromEntries(formDataToSend.entries()));
 
       // Send data to backend API
       const response = await fetch('/api/students', {
@@ -570,8 +569,6 @@ const StudentRegister = ({ onRegistered }) => {
         // Don't set Content-Type header, let the browser set it with the correct boundary
       });
 
-      console.log('Response status:', response.status);
-      console.log('Response headers:', response.headers);
 
       if (!response.ok) {
         const errorData = await response.text();
@@ -589,7 +586,6 @@ const StudentRegister = ({ onRegistered }) => {
       }
 
       const responseData = await response.json();
-      console.log('Success response:', responseData);
 
       setShowSuccessPopup(true);
 
