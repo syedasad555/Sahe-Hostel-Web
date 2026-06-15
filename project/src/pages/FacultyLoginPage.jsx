@@ -89,29 +89,21 @@ const FacultyLoginPage = ({ onClose }) => {
     setUpdateMsg({ type: '', text: '' });
     setUpdateBusy(true);
     try {
-      const changeEmail = !!updateEmail.trim();
-      const changePassword = !!updatePassword;
-
       if (!email.trim() || !password) {
         setUpdateMsg({ type: 'error', text: 'Enter your current email and password above first.' });
-        return;
-      }
-      if (!changeEmail && !changePassword) {
-        setUpdateMsg({ type: 'error', text: 'Enter a new email or password to update.' });
         return;
       }
 
       const data = await postJson('/api/auth/faculty/otp/request', {
         currentEmail: email.trim(),
         currentPassword: password,
-        changeEmail,
-        changePassword,
-        newEmail: updateEmail.trim() || '',
       });
 
       setOtpId(data.otpId || '');
       setOtpInput('');
       setOtpToken('');
+      setUpdateEmail('');
+      setUpdatePassword('');
       setUpdateMsg({ type: 'success', text: 'OTP sent. Enter the code below to verify.' });
     } catch (err) {
       setUpdateMsg({ type: 'error', text: err.message || 'OTP request failed.' });
@@ -340,8 +332,8 @@ const FacultyLoginPage = ({ onClose }) => {
               {showUpdateSection ? (
                 <div className="mt-4 space-y-4">
                   <p className="text-xs text-slate-500">
-                    Use your current email and password above. An OTP will be sent to the configured
-                    security inbox to confirm the change.
+                    Verify your identity with an OTP first. New email and password fields will
+                    appear after successful verification.
                   </p>
 
                   {updateMsg.text ? (
@@ -358,38 +350,17 @@ const FacultyLoginPage = ({ onClose }) => {
                     </div>
                   ) : null}
 
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs font-medium text-slate-700">New email</label>
-                      <input
-                        type="email"
-                        value={updateEmail}
-                        onChange={(e) => setUpdateEmail(e.target.value)}
-                        placeholder="Leave empty to keep current email"
-                        className={`mt-1.5 ${INPUT_CLASS}`}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-slate-700">New password</label>
-                      <input
-                        type="password"
-                        value={updatePassword}
-                        onChange={(e) => setUpdatePassword(e.target.value)}
-                        placeholder="Leave empty to keep current password"
-                        className={`mt-1.5 ${INPUT_CLASS}`}
-                      />
-                    </div>
-                  </div>
-
+                  {/* Step 1 – Send OTP */}
                   <button
                     type="button"
                     onClick={requestOtp}
                     disabled={updateBusy}
-                    className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60"
+                    className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60 transition-colors"
                   >
-                    {updateBusy ? 'Working…' : 'Send OTP'}
+                    {updateBusy ? 'Working…' : otpId ? 'Resend OTP' : 'Send OTP'}
                   </button>
 
+                  {/* Step 2 – Verify OTP */}
                   <div>
                     <label className="text-xs font-medium text-slate-700">OTP code</label>
                     <div className="mt-1.5 flex gap-2">
@@ -404,21 +375,57 @@ const FacultyLoginPage = ({ onClose }) => {
                         type="button"
                         onClick={verifyOtp}
                         disabled={updateBusy || !otpId}
-                        className="px-4 py-2.5 rounded-xl bg-slate-200 text-slate-900 text-sm font-semibold hover:bg-slate-300 disabled:opacity-60 whitespace-nowrap"
+                        className="px-4 py-2.5 rounded-xl bg-slate-200 text-slate-900 text-sm font-semibold hover:bg-slate-300 disabled:opacity-60 whitespace-nowrap transition-colors"
                       >
                         Verify
                       </button>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={applyUpdates}
-                    disabled={updateBusy || !otpToken}
-                    className="w-full py-2.5 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 disabled:opacity-60"
-                  >
-                    Apply changes
-                  </button>
+                  {/* Step 3 – New credentials (visible only after OTP verified) */}
+                  {otpToken ? (
+                    <div
+                      className="space-y-3 pt-3 border-t border-emerald-200"
+                      style={{ animation: 'fadeSlideIn 0.3s ease' }}
+                    >
+                      <p className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Identity verified — enter new credentials below
+                      </p>
+
+                      <div>
+                        <label className="text-xs font-medium text-slate-700">New email</label>
+                        <input
+                          type="email"
+                          value={updateEmail}
+                          onChange={(e) => setUpdateEmail(e.target.value)}
+                          placeholder="Leave empty to keep current email"
+                          className={`mt-1.5 ${INPUT_CLASS}`}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-slate-700">New password</label>
+                        <input
+                          type="password"
+                          value={updatePassword}
+                          onChange={(e) => setUpdatePassword(e.target.value)}
+                          placeholder="Leave empty to keep current password"
+                          className={`mt-1.5 ${INPUT_CLASS}`}
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={applyUpdates}
+                        disabled={updateBusy}
+                        className="w-full py-2.5 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 disabled:opacity-60 transition-colors"
+                      >
+                        Apply changes
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

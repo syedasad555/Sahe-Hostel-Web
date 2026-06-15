@@ -186,7 +186,7 @@ export const logoutFaculty = async (req, res) => {
 // @access  Public (requires current credentials)
 export const requestFacultyCredentialOtp = async (req, res) => {
   try {
-    const { currentEmail, currentPassword, newEmail, changeEmail, changePassword } = req.body || {};
+    const { currentEmail, currentPassword } = req.body || {};
 
     const { otpTo, otpFrom } = getOtpEmailConfig();
     if (!otpTo || !otpFrom) {
@@ -204,13 +204,6 @@ export const requestFacultyCredentialOtp = async (req, res) => {
       });
     }
 
-    if (!changeEmail && !changePassword) {
-      return res.status(400).json({
-        success: false,
-        message: 'Enter a new email or password to update.',
-      });
-    }
-
     const facultyEmailLower = String(currentEmail).trim().toLowerCase();
     const faculty = await Faculty.findOne({ email: facultyEmailLower, isActive: true });
 
@@ -219,21 +212,6 @@ export const requestFacultyCredentialOtp = async (req, res) => {
         success: false,
         message: 'Invalid email or password.',
       });
-    }
-
-    const expectedNewEmail = changeEmail
-      ? String(newEmail || '').trim().toLowerCase()
-      : facultyEmailLower;
-
-    if (!expectedNewEmail) {
-      return res.status(400).json({ success: false, message: 'New email is required.' });
-    }
-
-    if (changeEmail && expectedNewEmail !== facultyEmailLower) {
-      const taken = await Faculty.findOne({ email: expectedNewEmail });
-      if (taken && taken._id.toString() !== faculty._id.toString()) {
-        return res.status(400).json({ success: false, message: 'Email already in use.' });
-      }
     }
 
     const otpLength = readEnvNumber('FACULTY_OTP_LENGTH') ?? readEnvNumber('ADMIN_OTP_LENGTH');
@@ -250,8 +228,6 @@ export const requestFacultyCredentialOtp = async (req, res) => {
       purpose: 'faculty_credential_update',
       facultyId: faculty._id.toString(),
       facultyEmail: facultyEmailLower,
-      expectedNewEmail,
-      expectedChangePassword: !!changePassword,
     });
 
     try {
@@ -324,7 +300,7 @@ export const verifyFacultyCredentialOtp = async (req, res) => {
     facultyOtpStore.delete(otpId);
 
     const otpJwtExpire =
-      getEnvString('FACULTY_OTP_JWT_EXPIRE') || getEnvString('ADMIN_OTP_JWT_EXPIRE') || '2m';
+      getEnvString('FACULTY_OTP_JWT_EXPIRE') || getEnvString('ADMIN_OTP_JWT_EXPIRE') || '10m';
     const otpToken = jwt.sign(
       {
         type: 'faculty_otp',
@@ -332,8 +308,6 @@ export const verifyFacultyCredentialOtp = async (req, res) => {
         otpId,
         facultyId: rec.facultyId,
         facultyEmail: rec.facultyEmail,
-        expectedNewEmail: rec.expectedNewEmail,
-        expectedChangePassword: rec.expectedChangePassword,
       },
       process.env.JWT_SECRET || 'fallback_secret_key_for_development',
       { expiresIn: otpJwtExpire }
@@ -374,28 +348,32 @@ export const updateFacultyCredentials = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Faculty session mismatch.' });
     }
 
-    const expectedNewEmail = String(decoded.expectedNewEmail || '').trim().toLowerCase();
-    if (!expectedNewEmail) {
-      return res.status(400).json({ success: false, message: 'Invalid expected email.' });
-    }
+    const changeEmail = !!(newEmail && String(newEmail).trim());
+    const changePassword = !!(newPassword && String(newPassword).trim());
 
-    const changePassword = !!decoded.expectedChangePassword;
+    if (!changeEmail && !changePassword) {
+      return res.status(400).json({ success: false, message: 'Enter a new email or password to update.' });
+    }
 
     const bcryptCostRaw =
       getEnvString('FACULTY_BCRYPT_COST') || getEnvString('ADMIN_BCRYPT_COST');
     const bcryptCost = bcryptCostRaw ? Number(bcryptCostRaw) : 12;
 
     const update = {};
-    if (expectedNewEmail !== faculty.email.toLowerCase()) {
-      const taken = await Faculty.findOne({ email: expectedNewEmail });
-      if (taken && taken._id.toString() !== faculty._id.toString()) {
-        return res.status(400).json({ success: false, message: 'Email already in use.' });
+
+    if (changeEmail) {
+      const newEmailLower = String(newEmail).trim().toLowerCase();
+      if (newEmailLower !== faculty.email.toLowerCase()) {
+        const taken = await Faculty.findOne({ email: newEmailLower });
+        if (taken && taken._id.toString() !== faculty._id.toString()) {
+          return res.status(400).json({ success: false, message: 'Email already in use.' });
+        }
       }
-      update.email = expectedNewEmail;
+      update.email = newEmailLower;
     }
 
     if (changePassword) {
-      if (!newPassword || String(newPassword).length < 6) {
+      if (String(newPassword).length < 6) {
         return res.status(400).json({
           success: false,
           message: 'New password is required (min 6 characters).',

@@ -190,7 +190,7 @@ const WhyChoose = () => {
       </section>
 
       {/* Team Section — layout matches “Meet Our Team” reference cards */}
-      <section className="team-section team-section--meet">
+      <section id="coordinators" className="team-section team-section--meet">
         <div className="container team-section__inner">
           <motion.div
             className="section-header team-section__header"

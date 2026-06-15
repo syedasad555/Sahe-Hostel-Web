@@ -1,11 +1,8 @@
 import { MapPin, ChevronDown } from 'lucide-react';
 import { useRef, useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
-import FacultyLoginPage from '../pages/FacultyLoginPage';
 
 export default function Hero({ onBookNow, onStudentRegister }) {
-  const [showFacultyLogin, setShowFacultyLogin] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [isFacultyHovered, setIsFacultyHovered] = useState(false);
   const heroRef = useRef(null);
@@ -376,7 +373,10 @@ export default function Hero({ onBookNow, onStudentRegister }) {
           </motion.button>
 
           <motion.button 
-            onClick={() => setShowFacultyLogin(true)}
+            onClick={() => {
+              const section = document.getElementById('coordinators');
+              if (section) section.scrollIntoView({ behavior: 'smooth' });
+            }}
             onMouseEnter={() => setIsFacultyHovered(true)}
             onMouseLeave={() => setIsFacultyHovered(false)}
             className="group relative px-8 py-4 bg-white/20 backdrop-blur-lg border-2 border-white/30 text-white text-lg font-semibold rounded-full overflow-hidden hover:bg-white/30 hover:border-white/50 transition-all duration-300 shadow-lg hover:shadow-xl hover:shadow-white/10"
@@ -392,14 +392,14 @@ export default function Hero({ onBookNow, onStudentRegister }) {
             whileHover={{ 
               y: -8,
               scale: 1.05,
-              boxShadow: '0 10px 25px -5px rgba(59, 130, 246, 0.3)',
+              boxShadow: '0 10px 25px -5px rgba(99, 102, 241, 0.3)',
               transition: {
                 ease: [0.4, 0, 0.2, 1]
               }
             }}
           >
             <span className="relative z-10 flex items-center">
-              Admin Login
+              Coordinators
               <motion.span 
                 className="ml-2"
                 animate={isFacultyHovered ? { x: [0, 5, 0] } : { x: 0 }}
@@ -409,7 +409,7 @@ export default function Hero({ onBookNow, onStudentRegister }) {
               </motion.span>
             </span>
             <motion.div 
-              className="absolute inset-0 bg-gradient-to-r from-blue-600 to-blue-700 z-0"
+              className="absolute inset-0 bg-gradient-to-r from-indigo-600 to-violet-600 z-0"
               initial={{ y: '100%' }}
               whileHover={{ y: 0 }}
               transition={{ duration: 0.3, ease: 'easeOut' }}
@@ -480,11 +480,6 @@ export default function Hero({ onBookNow, onStudentRegister }) {
         </motion.div>
       </div>
       
-      {showFacultyLogin &&
-        createPortal(
-          <FacultyLoginPage onClose={() => setShowFacultyLogin(false)} />,
-          document.body
-        )}
     </motion.div>
   );
 }
