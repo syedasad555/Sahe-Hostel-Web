@@ -142,16 +142,14 @@ const StudentRegister = ({ onRegistered }) => {
     studentPhoto: null,
     parentPhoto: null,
     tenthCertificate: null,
-    paymentReceipt: null,
-    aadharCard: null
+    paymentReceipt: null
   });
 
   const [previewUrls, setPreviewUrls] = useState({
     studentPhoto: null,
     parentPhoto: null,
     tenthCertificate: null,
-    paymentReceipt: null,
-    aadharCard: null
+    paymentReceipt: null
   });
 
   useEffect(() => {
@@ -341,10 +339,6 @@ const StudentRegister = ({ onRegistered }) => {
       }
     }
 
-    if (!files.aadharCard) {
-      alert('Please upload Aadhar card');
-      return false;
-    }
 
     if (!isValidIndianMobile(formData.emergencyContact)) {
       alert(
@@ -421,8 +415,6 @@ const StudentRegister = ({ onRegistered }) => {
           }) === null;
         return (
           formData.bloodGroup &&
-          formData.aadharNumber &&
-          files.aadharCard &&
           receiptOk &&
           pendingOk &&
           emergencyOk &&
@@ -493,11 +485,11 @@ const StudentRegister = ({ onRegistered }) => {
     });
     setFiles({
       studentPhoto: null, parentPhoto: null,
-      tenthCertificate: null, paymentReceipt: null, aadharCard: null
+      tenthCertificate: null, paymentReceipt: null
     });
     setPreviewUrls({
       studentPhoto: null, parentPhoto: null,
-      tenthCertificate: null, paymentReceipt: null, aadharCard: null
+      tenthCertificate: null, paymentReceipt: null
     });
     setCurrentStep(1);
     setSubmitStatus(null);
@@ -557,9 +549,7 @@ const StudentRegister = ({ onRegistered }) => {
       if (files.paymentReceipt) {
         formDataToSend.append('paymentReceipt', files.paymentReceipt);
       }
-      if (files.aadharCard) {
-        formDataToSend.append('aadharCard', files.aadharCard);
-      }
+
 
 
       // Send data to backend API
@@ -1496,39 +1486,6 @@ const StudentRegister = ({ onRegistered }) => {
                     </div>
                   </div>
 
-                  {/* Aadhar Card Upload */}
-                  <div style={styles.inputGroup}>
-                    <br></br>
-                    <label style={styles.label}>Upload Aadhar Card *</label>
-                    <label
-                      className="student-reg-aadhar-upload"
-                      style={{
-                        ...styles.uploadBox,
-                        aspectRatio: 'auto',
-                        minHeight: '100px',
-                        height: 'auto',
-                        width: '100%',
-                        maxWidth: 'min(100%, 320px)',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <input
-                        type="file"
-                        name="aadharCard"
-                        onChange={handleFileChange}
-                        accept="image/*,.pdf"
-                        style={{ ...styles.fileInput, position: 'absolute', opacity: 0, width: '100%', height: '100%', cursor: 'pointer' }}
-                      />
-                      <div style={styles.uploadContent}>
-                        <FileText size={24} style={styles.uploadIcon} />
-                        <span style={styles.uploadTitle}>Aadhar Card</span>
-                        <span style={styles.uploadSubtitle}>PDF, JPG, PNG (Max 5MB)</span>
-                        {files.aadharCard && (
-                          <span style={styles.fileName}>{files.aadharCard.name}</span>
-                        )}
-                      </div>
-                    </label>
-                  </div>
                 </div>
 
                 {/* Payment Information */}
