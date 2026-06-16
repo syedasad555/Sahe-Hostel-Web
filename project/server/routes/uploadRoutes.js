@@ -1,27 +1,24 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { CSV_TEMP_DIR, ensureUploadsDir } from '../config/uploadsDir.js';
 import { processCsvUpload } from '../controllers/uploadController.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+ensureUploadsDir();
 
 const router = express.Router();
 
-// Configure multer for CSV file uploads
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, '../uploads'));
+  destination(_req, _file, cb) {
+    cb(null, CSV_TEMP_DIR);
   },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
+  filename(_req, file, cb) {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`);
+  },
 });
 
-const fileFilter = (req, file, cb) => {
-  // Only allow CSV files
+const fileFilter = (_req, file, cb) => {
   if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
     cb(null, true);
   } else {
@@ -30,14 +27,11 @@ const fileFilter = (req, file, cb) => {
 };
 
 const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  }
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-// Route for CSV upload
 router.post('/csv', upload.single('csvFile'), processCsvUpload);
 
 export default router;

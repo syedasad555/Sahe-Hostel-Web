@@ -1,53 +1,62 @@
+import { Op, Sequelize } from 'sequelize';
 import Student from '../models/Student.js';
-import OutingPermission from '../models/OutingPermission.js';
+import OutingPermission, { OutingPermissionMember } from '../models/OutingPermission.js';
 import {
-  getFast2smsConfigError,
-  isFast2smsConfigured,
+  buildSalesquaredOutingMessage,
+  getSalesquaredConfigError,
+  isSalesquaredConfigured,
   normalizeIndianMobileDigits,
-  sendFast2sms,
-} from '../utils/fast2sms.js';
+  sendSalesquaredSms,
+} from '../utils/salesquared.js';
+import { toApiJson, toApiJsonList } from '../utils/apiSerialize.js';
+import { likePattern, parseId } from '../utils/queryHelpers.js';
 
 function normalizeRoll(r) {
   return String(r ?? '').trim().toUpperCase();
 }
 
-function escapeRegex(s) {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-async function findStudentOutingFields(roll, select) {
+async function findStudentOutingFields(roll, attributeList) {
   const norm = normalizeRoll(roll);
   if (!norm) return null;
-  let student = await Student.findOne({ rollNumber: norm }).select(select);
-  if (!student) {
-    student = await Student.findOne({
-      rollNumber: { $regex: new RegExp(`^${escapeRegex(norm)}$`, 'i') },
-    }).select(select);
-  }
-  if (!student) {
-    // tolerate accidental leading/trailing spaces in legacy data
-    student = await Student.findOne({
-      rollNumber: { $regex: new RegExp(`^\\s*${escapeRegex(norm)}\\s*$`, 'i') },
-    }).select(select);
-  }
-  if (!student) {
-    // fallback: compare alphanumeric-only form (e.g., with dashes/spaces in DB)
-    const normAlnum = norm.replace(/[^A-Z0-9]/g, '');
-    if (normAlnum) {
-      const candidates = await Student.find({
-        rollNumber: { $exists: true, $ne: null, $ne: '' },
-      }).select(`rollNumber ${select}`);
-      student =
-        candidates.find(
-          (c) =>
-            String(c.rollNumber || '')
-              .trim()
-              .toUpperCase()
-              .replace(/[^A-Z0-9]/g, '') === normAlnum
-        ) || null;
-    }
-  }
-  return student;
+
+  const attrs = String(attributeList || '')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  let student = await Student.findOne({
+    where: { rollNumber: norm },
+    attributes: attrs.length ? attrs : undefined,
+  });
+  if (student) return student;
+
+  student = await Student.findOne({
+    where: Sequelize.where(
+      Sequelize.fn('UPPER', Sequelize.fn('TRIM', Sequelize.col('roll_number'))),
+      norm
+    ),
+    attributes: attrs.length ? attrs : undefined,
+  });
+  if (student) return student;
+
+  const normAlnum = norm.replace(/[^A-Z0-9]/g, '');
+  if (!normAlnum) return null;
+
+  const candidates = await Student.findAll({
+    where: {
+      rollNumber: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
+    },
+    attributes: attrs.length ? attrs : undefined,
+  });
+
+  return (
+    candidates.find(
+      (c) =>
+        String(c.rollNumber || '')
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '') === normAlnum
+    ) || null
+  );
 }
 
 function formatOutingDate(dt) {
@@ -66,26 +75,45 @@ function formatOutingDate(dt) {
   }
 }
 
+async function loadPermissionWithMembers(id) {
+  const permission = await OutingPermission.findByPk(id, {
+    include: [{ model: OutingPermissionMember, as: 'members' }],
+  });
+  return permission ? toApiJson(permission) : null;
+}
+
 // @route   GET /api/outing/students
 // @access  Faculty
 export const listOutingStudents = async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 300), 2000);
     const search = String(req.query.search || '').trim();
-    const query = {};
+    const where = {};
+
     if (search) {
-      query.$or = [
-        { studentName: { $regex: search, $options: 'i' } },
-        { rollNumber: { $regex: search, $options: 'i' } },
+      where[Op.or] = [
+        { studentName: likePattern(search) },
+        { rollNumber: likePattern(search) },
       ];
     }
 
-    const students = await Student.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .select('studentName rollNumber year branch parentPhone phone createdAt');
+    const students = await Student.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      limit,
+      attributes: [
+        'id',
+        'studentName',
+        'rollNumber',
+        'year',
+        'branch',
+        'parentPhone',
+        'phone',
+        'createdAt',
+      ],
+    });
 
-    return res.json({ success: true, data: students });
+    return res.json({ success: true, data: toApiJsonList(students) });
   } catch (error) {
     console.error('listOutingStudents:', error);
     return res.status(500).json({ success: false, message: 'Failed to load students.' });
@@ -101,7 +129,10 @@ export const lookupStudentByRoll = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Roll number is required.' });
     }
 
-    const student = await findStudentOutingFields(roll, 'studentName parentPhone rollNumber year phone');
+    const student = await findStudentOutingFields(
+      roll,
+      'studentName parentPhone rollNumber year phone'
+    );
 
     if (!student) {
       return res.status(404).json({
@@ -127,14 +158,13 @@ export const lookupStudentByRoll = async (req, res) => {
 };
 
 // @route   POST /api/outing/notify
-// @body    { outingMembers?: { rollNumber, block }[], rollNumbers?: string[], outingOut, outingIn }
 // @access  Faculty
 export const notifyOutingParents = async (req, res) => {
   try {
-    if (!isFast2smsConfigured()) {
+    if (!isSalesquaredConfigured()) {
       return res.status(503).json({
         success: false,
-        message: getFast2smsConfigError() || 'SMS is not configured.',
+        message: getSalesquaredConfigError() || 'SMS is not configured.',
       });
     }
 
@@ -148,14 +178,12 @@ export const notifyOutingParents = async (req, res) => {
         entries.push({ roll, block: String(m?.block ?? '').trim() });
       }
     }
-    // If outingMembers was missing, malformed, or every roll was empty, fall back to rollNumbers.
     if (entries.length === 0 && Array.isArray(rollNumbers)) {
       for (const raw of rollNumbers) {
         const roll = normalizeRoll(raw);
         if (roll) entries.push({ roll, block: '' });
       }
     }
-    // Attach blocks from outingMembers when rolls came from rollNumbers fallback (same roll keys).
     if (entries.length > 0 && Array.isArray(outingMembers) && outingMembers.length > 0) {
       const blockByRoll = new Map();
       for (const m of outingMembers) {
@@ -186,7 +214,7 @@ export const notifyOutingParents = async (req, res) => {
 
     const outStr = formatOutingDate(outDt);
     const inStr = formatOutingDate(inDt);
-    const message = `Your Child had taken permission for outing from ${outStr} and until ${inStr} dates.`;
+    const message = buildSalesquaredOutingMessage(outStr, inStr);
 
     const results = [];
 
@@ -214,7 +242,6 @@ export const notifyOutingParents = async (req, res) => {
       }
 
       const studentPhone = String(student.phone ?? '').trim();
-
       const digits = normalizeIndianMobileDigits(student.parentPhone);
       if (digits.length !== 10) {
         results.push({
@@ -230,7 +257,7 @@ export const notifyOutingParents = async (req, res) => {
       }
 
       try {
-        const sms = await sendFast2sms(digits, message);
+        const sms = await sendSalesquaredSms(digits, message);
         const data = sms.data ?? {};
         const apiMessage = Array.isArray(data.message)
           ? data.message.join(' ')
@@ -251,7 +278,7 @@ export const notifyOutingParents = async (req, res) => {
           httpStatus: sms.httpStatus,
         });
       } catch (err) {
-        console.error('Fast2SMS error:', err);
+        console.error('SaleSquared SMS error:', err);
         results.push({
           rollNumber: student.rollNumber,
           studentName: student.studentName,
@@ -264,14 +291,22 @@ export const notifyOutingParents = async (req, res) => {
       }
     }
 
-    // Persist permission + results for list/delete/download
-    let permissionDoc = null;
+    let permissionPlain = null;
     try {
-      permissionDoc = await OutingPermission.create({
+      const createdBy = parseId(req.user?._id ?? req.user?.id);
+      if (!createdBy) {
+        throw new Error('Faculty id missing for outing permission');
+      }
+
+      const permission = await OutingPermission.create({
         outingOut: outDt,
         outingIn: inDt,
-        createdBy: req.user?._id,
-        members: results.map((r) => ({
+        createdBy,
+      });
+
+      await OutingPermissionMember.bulkCreate(
+        results.map((r) => ({
+          permissionId: permission.id,
           rollNumber: String(r.rollNumber || '').trim().toUpperCase(),
           studentName: r.studentName || '',
           studentPhone: r.studentPhone || '',
@@ -281,16 +316,13 @@ export const notifyOutingParents = async (req, res) => {
           feedback: r.feedback || '',
           requestId: r.requestId || r.request_id || '',
           httpStatus: r.httpStatus ?? null,
-        })),
-      });
+        }))
+      );
+
+      permissionPlain = await loadPermissionWithMembers(permission.id);
     } catch (e) {
       console.error('Failed to save outing permission:', e);
     }
-
-    const permissionPlain =
-      permissionDoc && typeof permissionDoc.toObject === 'function'
-        ? permissionDoc.toObject({ flattenMaps: true })
-        : permissionDoc;
 
     return res.json({
       success: true,
@@ -304,7 +336,7 @@ export const notifyOutingParents = async (req, res) => {
   }
 };
 
-// @route   GET /api/outing/permissions?status=ongoing|completed|both&search=
+// @route   GET /api/outing/permissions
 // @access  Faculty
 export const listOutingPermissions = async (req, res) => {
   try {
@@ -313,36 +345,56 @@ export const listOutingPermissions = async (req, res) => {
     const limit = Math.min(Number(req.query.limit || 20), 200);
     const page = Math.max(1, Number(req.query.page || 1));
 
-    const query = {};
+    const where = {};
     const now = new Date();
-    if (status === 'ongoing') query.outingIn = { $gt: now };
-    else if (status === 'completed') query.outingIn = { $lte: now };
+    if (status === 'ongoing') where.outingIn = { [Op.gt]: now };
+    else if (status === 'completed') where.outingIn = { [Op.lte]: now };
 
     if (search) {
-      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-      query.$or = [
-        { 'members.rollNumber': rx },
-        { 'members.studentName': rx },
-        { 'members.studentPhone': rx },
-        { 'members.parentPhone': rx },
-        { 'members.block': rx },
-        { 'members.feedback': rx },
-      ];
+      const matchingMembers = await OutingPermissionMember.findAll({
+        where: {
+          [Op.or]: [
+            { rollNumber: likePattern(search) },
+            { studentName: likePattern(search) },
+            { studentPhone: likePattern(search) },
+            { parentPhone: likePattern(search) },
+            { block: likePattern(search) },
+            { feedback: likePattern(search) },
+          ],
+        },
+        attributes: ['permissionId'],
+        group: ['permissionId'],
+      });
+      const permissionIds = matchingMembers.map((m) => m.permissionId);
+      if (permissionIds.length === 0) {
+        return res.json({
+          success: true,
+          data: [],
+          total: 0,
+          totalPages: 1,
+          currentPage: 1,
+          limit,
+        });
+      }
+      where.id = { [Op.in]: permissionIds };
     }
 
-    const total = await OutingPermission.countDocuments(query);
+    const total = await OutingPermission.count({ where });
     const totalPages = Math.max(1, Math.ceil(total / limit));
     const safePage = Math.min(page, totalPages);
+    const offset = (safePage - 1) * limit;
 
-    const permissions = await OutingPermission.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .skip((safePage - 1) * limit)
-      .lean();
+    const permissions = await OutingPermission.findAll({
+      where,
+      include: [{ model: OutingPermissionMember, as: 'members' }],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
 
     return res.json({
       success: true,
-      data: permissions,
+      data: toApiJsonList(permissions),
       total,
       totalPages,
       currentPage: safePage,
@@ -358,25 +410,36 @@ export const listOutingPermissions = async (req, res) => {
 // @access  Faculty
 export const removeOutingMember = async (req, res) => {
   try {
-    const permissionId = req.params.id;
+    const permissionId = parseId(req.params.id);
     const roll = normalizeRoll(req.params.rollNumber);
-    if (!roll) {
+    if (!permissionId || !roll) {
       return res.status(400).json({ success: false, message: 'Roll number is required.' });
     }
 
-    const doc = await OutingPermission.findById(permissionId);
+    const doc = await OutingPermission.findByPk(permissionId);
     if (!doc) {
       return res.status(404).json({ success: false, message: 'Permission not found.' });
     }
 
-    const before = doc.members.length;
-    doc.members = doc.members.filter((m) => normalizeRoll(m.rollNumber) !== roll);
-    if (doc.members.length === before) {
-      return res.status(404).json({ success: false, message: 'Member not found on this permission.' });
+    const deleted = await OutingPermissionMember.destroy({
+      where: {
+        permissionId,
+        rollNumber: roll,
+      },
+    });
+
+    if (!deleted) {
+      const members = await OutingPermissionMember.findAll({ where: { permissionId } });
+      const match = members.find((m) => normalizeRoll(m.rollNumber) === roll);
+      if (!match) {
+        return res.status(404).json({ success: false, message: 'Member not found on this permission.' });
+      }
+      await match.destroy();
     }
 
-    if (doc.members.length === 0) {
-      await OutingPermission.findByIdAndDelete(permissionId);
+    const remaining = await OutingPermissionMember.count({ where: { permissionId } });
+    if (remaining === 0) {
+      await doc.destroy();
       return res.json({
         success: true,
         message: 'Last member removed; the outing permission record was deleted.',
@@ -384,8 +447,7 @@ export const removeOutingMember = async (req, res) => {
       });
     }
 
-    await doc.save();
-    const permissionPlain = doc.toObject({ flattenMaps: true });
+    const permissionPlain = await loadPermissionWithMembers(permissionId);
     return res.json({ success: true, message: 'Member removed.', permission: permissionPlain });
   } catch (e) {
     console.error('removeOutingMember:', e);
@@ -397,10 +459,12 @@ export const removeOutingMember = async (req, res) => {
 // @access  Faculty
 export const deleteOutingPermission = async (req, res) => {
   try {
-    const deleted = await OutingPermission.findByIdAndDelete(req.params.id);
+    const id = parseId(req.params.id);
+    const deleted = id ? await OutingPermission.findByPk(id) : null;
     if (!deleted) {
       return res.status(404).json({ success: false, message: 'Permission not found.' });
     }
+    await deleted.destroy();
     return res.json({ success: true, message: 'Permission deleted.' });
   } catch (e) {
     console.error('deleteOutingPermission:', e);

@@ -1,8 +1,9 @@
 import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
 import Faculty from '../models/Faculty.js';
 import jwt from 'jsonwebtoken';
 import { sendOtpEmail } from '../utils/otpEmailService.js';
+import { toApiJson } from '../utils/apiSerialize.js';
+import { parseId } from '../utils/queryHelpers.js';
 
 const facultyOtpStore = new Map();
 
@@ -69,9 +70,11 @@ export const loginFaculty = async (req, res) => {
     }
 
     // Find faculty by email
-    const faculty = await Faculty.findOne({ 
-      email: email.toLowerCase().trim(),
-      isActive: true 
+    const faculty = await Faculty.findOne({
+      where: {
+        email: email.toLowerCase().trim(),
+        isActive: true,
+      },
     });
 
     if (!faculty) {
@@ -97,12 +100,12 @@ export const loginFaculty = async (req, res) => {
 
     // Create JWT token
     const token = jwt.sign(
-      { 
-        id: faculty._id,
+      {
+        id: String(faculty.id),
         email: faculty.email,
         name: faculty.name,
         role: faculty.role,
-        type: 'faculty'
+        type: 'faculty',
       },
       process.env.JWT_SECRET || 'fallback_secret_key_for_development',
       { expiresIn: '24h' }
@@ -113,15 +116,15 @@ export const loginFaculty = async (req, res) => {
       message: 'Login successful',
       token,
       faculty: {
-        _id: faculty._id,
+        _id: String(faculty.id),
         name: faculty.name,
         email: faculty.email,
         department: faculty.department,
         employeeId: faculty.employeeId,
         designation: faculty.designation,
         role: faculty.role,
-        lastLogin: faculty.lastLogin
-      }
+        lastLogin: faculty.lastLogin,
+      },
     });
 
   } catch (error) {
@@ -139,18 +142,21 @@ export const loginFaculty = async (req, res) => {
 // @access  Private
 export const getFacultyProfile = async (req, res) => {
   try {
-    const faculty = await Faculty.findById(req.user.id).select('-password');
-    
+    const id = parseId(req.user._id ?? req.user.id);
+    const faculty = id
+      ? await Faculty.findByPk(id, { attributes: { exclude: ['password'] } })
+      : null;
+
     if (!faculty) {
       return res.status(404).json({
         success: false,
-        message: 'Faculty not found'
+        message: 'Faculty not found',
       });
     }
 
     res.json({
       success: true,
-      faculty
+      faculty: toApiJson(faculty),
     });
   } catch (error) {
     console.error('Error getting faculty profile:', error);
@@ -205,7 +211,9 @@ export const requestFacultyCredentialOtp = async (req, res) => {
     }
 
     const facultyEmailLower = String(currentEmail).trim().toLowerCase();
-    const faculty = await Faculty.findOne({ email: facultyEmailLower, isActive: true });
+    const faculty = await Faculty.findOne({
+      where: { email: facultyEmailLower, isActive: true },
+    });
 
     if (!faculty || !(await faculty.comparePassword(currentPassword))) {
       return res.status(401).json({
@@ -226,7 +234,7 @@ export const requestFacultyCredentialOtp = async (req, res) => {
       otpHash: hashSha256(otpCode),
       expiresAt,
       purpose: 'faculty_credential_update',
-      facultyId: faculty._id.toString(),
+      facultyId: String(faculty.id),
       facultyEmail: facultyEmailLower,
     });
 
@@ -339,7 +347,8 @@ export const updateFacultyCredentials = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid otpToken.' });
     }
 
-    const faculty = await Faculty.findById(decoded.facultyId);
+    const facultyId = parseId(decoded.facultyId);
+    const faculty = facultyId ? await Faculty.findByPk(facultyId) : null;
     if (!faculty || !faculty.isActive) {
       return res.status(404).json({ success: false, message: 'Faculty record not found.' });
     }
@@ -355,21 +364,15 @@ export const updateFacultyCredentials = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Enter a new email or password to update.' });
     }
 
-    const bcryptCostRaw =
-      getEnvString('FACULTY_BCRYPT_COST') || getEnvString('ADMIN_BCRYPT_COST');
-    const bcryptCost = bcryptCostRaw ? Number(bcryptCostRaw) : 12;
-
-    const update = {};
-
     if (changeEmail) {
       const newEmailLower = String(newEmail).trim().toLowerCase();
       if (newEmailLower !== faculty.email.toLowerCase()) {
-        const taken = await Faculty.findOne({ email: newEmailLower });
-        if (taken && taken._id.toString() !== faculty._id.toString()) {
+        const taken = await Faculty.findOne({ where: { email: newEmailLower } });
+        if (taken && taken.id !== faculty.id) {
           return res.status(400).json({ success: false, message: 'Email already in use.' });
         }
       }
-      update.email = newEmailLower;
+      faculty.email = newEmailLower;
     }
 
     if (changePassword) {
@@ -379,15 +382,10 @@ export const updateFacultyCredentials = async (req, res) => {
           message: 'New password is required (min 6 characters).',
         });
       }
-      const salt = await bcrypt.genSalt(Number.isFinite(bcryptCost) ? bcryptCost : 12);
-      update.password = await bcrypt.hash(String(newPassword), salt);
+      faculty.password = String(newPassword);
     }
 
-    if (!Object.keys(update).length) {
-      return res.status(400).json({ success: false, message: 'Nothing to update.' });
-    }
-
-    await Faculty.updateOne({ _id: faculty._id }, update);
+    await faculty.save();
 
     return res.json({ success: true, message: 'Faculty credentials updated successfully.' });
   } catch (error) {

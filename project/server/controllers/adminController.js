@@ -1,5 +1,5 @@
 import os from 'os';
-import mongoose from 'mongoose';
+import { Op } from 'sequelize';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -8,8 +8,11 @@ import Faculty from '../models/Faculty.js';
 import Complaint from '../models/Complaint.js';
 import MealSelection from '../models/MealSelection.js';
 import OutingPermission from '../models/OutingPermission.js';
+import { OutingPermissionMember } from '../models/OutingPermission.js';
 import SystemAdmin from '../models/SystemAdmin.js';
-import { isFast2smsConfigured } from '../utils/fast2sms.js';
+import { sequelize } from '../config/db.js';
+import { todayDateOnly } from '../utils/queryHelpers.js';
+import { isSalesquaredConfigured } from '../utils/salesquared.js';
 import {
   getAdminCredentials,
   isAdminConfigured,
@@ -17,12 +20,9 @@ import {
 } from '../utils/adminAuth.js';
 import { sendOtpEmail } from '../utils/otpEmailService.js';
 
-const MONGO_STATES = {
-  0: 'disconnected',
-  1: 'connected',
-  2: 'connecting',
-  3: 'disconnecting',
-};
+function statusFromMysql(connected) {
+  return connected ? 'healthy' : 'critical';
+}
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return '—';
@@ -40,12 +40,6 @@ function heapHealthRatio() {
   const mem = process.memoryUsage();
   if (!mem.heapTotal) return 0;
   return mem.heapUsed / mem.heapTotal;
-}
-
-function statusFromMongo(state) {
-  if (state === 1) return 'healthy';
-  if (state === 2) return 'warning';
-  return 'critical';
 }
 
 function readEnvNumber(name) {
@@ -100,7 +94,7 @@ export const loginAdmin = async (req, res) => {
     }
 
     const inputEmail = String(email).trim().toLowerCase();
-    const adminDoc = await SystemAdmin.findOne({ email: inputEmail });
+    const adminDoc = await SystemAdmin.findOne({ where: { email: inputEmail } });
 
     let verified = false;
 
@@ -126,11 +120,10 @@ export const loginAdmin = async (req, res) => {
       const bcryptCost = Number.isFinite(Number(bcryptCostRaw)) ? Number(bcryptCostRaw) : 12;
       const salt = await bcrypt.genSalt(bcryptCost);
       const passwordHash = await bcrypt.hash(String(configured.password), salt);
-      await SystemAdmin.updateOne(
-        { email: configured.email.toLowerCase() },
-        { $setOnInsert: { email: configured.email.toLowerCase(), passwordHash } },
-        { upsert: true }
-      );
+      await SystemAdmin.upsert({
+        email: configured.email.toLowerCase(),
+        passwordHash,
+      });
     }
 
     const token = jwt.sign(
@@ -172,11 +165,16 @@ export const getAdminProfile = async (req, res) => {
 export const getAdminDashboard = async (req, res) => {
   try {
     const now = new Date();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const today = todayDateOnly();
 
-    const mongoState = mongoose.connection.readyState;
+    let mysqlConnected = false;
+    try {
+      await sequelize.authenticate();
+      mysqlConnected = true;
+    } catch {
+      mysqlConnected = false;
+    }
+
     const mem = process.memoryUsage();
     const heapRatio = heapHealthRatio();
     const load = os.loadavg();
@@ -189,37 +187,30 @@ export const getAdminDashboard = async (req, res) => {
       complaintsTotal,
       mealsToday,
       outingPermissionsTotal,
-      outingMembersAgg,
+      outingMembersTotal,
       studentsPendingPayment,
     ] = await Promise.all([
-      Student.countDocuments(),
-      Faculty.countDocuments(),
-      Complaint.countDocuments({ status: { $in: ['open', 'in_review'] } }),
-      Complaint.countDocuments(),
-      MealSelection.countDocuments({
-        date: { $gte: todayStart, $lt: todayEnd },
-      }),
-      OutingPermission.countDocuments(),
-      OutingPermission.aggregate([
-        { $project: { memberCount: { $size: { $ifNull: ['$members', []] } } } },
-        { $group: { _id: null, total: { $sum: '$memberCount' } } },
-      ]),
-      Student.countDocuments({ paymentStatus: { $ne: 'Done' } }),
+      Student.count(),
+      Faculty.count(),
+      Complaint.count({ where: { status: { [Op.in]: ['open', 'in_review'] } } }),
+      Complaint.count(),
+      MealSelection.count({ where: { date: today } }),
+      OutingPermission.count(),
+      OutingPermissionMember.count(),
+      Student.count({ where: { paymentStatus: { [Op.ne]: 'Done' } } }),
     ]);
 
-    const outingMembersTotal = outingMembersAgg[0]?.total ?? 0;
-
-    const mongodbStatus = statusFromMongo(mongoState);
+    const mysqlStatus = statusFromMysql(mysqlConnected);
     const memoryStatus = statusFromMemory(heapRatio);
     const cpuStatus = statusFromLoad(load[0], cpus);
     const uptimeStatus = statusFromUptime();
 
     const checks = [
       {
-        id: 'mongodb',
-        label: 'MongoDB',
-        status: mongodbStatus,
-        detail: MONGO_STATES[mongoState] || 'unknown',
+        id: 'mysql',
+        label: 'MySQL',
+        status: mysqlStatus,
+        detail: mysqlConnected ? 'connected' : 'disconnected',
       },
       {
         id: 'memory',
@@ -245,15 +236,15 @@ export const getAdminDashboard = async (req, res) => {
     const knownWarning = checks.some((c) => c.status === 'warning');
 
     const integrations = {
-      mongodb: mongodbStatus === 'healthy',
-      fast2sms: isFast2smsConfigured(),
+      mysql: mysqlStatus === 'healthy',
+      salesquared: isSalesquaredConfigured(),
       email: !!(process.env.EMAIL_USER && process.env.EMAIL_PASS),
       jwtSecretSet: !!String(process.env.JWT_SECRET || '').trim(),
     };
 
     const health = {
       overall:
-        mongodbStatus === 'critical' || knownCritical
+        mysqlStatus === 'critical' || knownCritical
           ? 'critical'
           : knownWarning
             ? 'warning'
@@ -514,18 +505,15 @@ export const updateAdminCredentials = async (req, res) => {
       passwordHash = await bcrypt.hash(String(newPassword), salt);
     }
 
-    const existing = await SystemAdmin.findOne({ email: adminEmailLower });
+    const existing = await SystemAdmin.findOne({ where: { email: adminEmailLower } });
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Admin record not found.' });
     }
 
-    await SystemAdmin.updateOne(
-      { email: adminEmailLower },
-      {
-        ...(finalNewEmail ? { email: finalNewEmail } : {}),
-        ...(passwordHash ? { passwordHash } : {}),
-      }
-    );
+    await existing.update({
+      ...(finalNewEmail ? { email: finalNewEmail } : {}),
+      ...(passwordHash ? { passwordHash } : {}),
+    });
 
     return res.json({ success: true, message: 'Admin credentials updated successfully.' });
   } catch (error) {

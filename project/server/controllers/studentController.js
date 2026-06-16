@@ -1,29 +1,89 @@
 import Student from '../models/Student.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
+import { Op } from 'sequelize';
 import { validateStudentNumber } from '../utils/csvValidation.js';
 import { validateRegistrationContacts } from '../utils/contactValidation.js';
-import { isFast2smsConfigured, sendFast2sms } from '../utils/fast2sms.js';
+import {
+  buildSalesquaredRegistrationMessage,
+  isSalesquaredConfigured,
+  sendSalesquaredSms,
+} from '../utils/salesquared.js';
+import { UPLOADS_DIR } from '../config/uploadsDir.js';
+import { toApiJson, toApiJsonList } from '../utils/apiSerialize.js';
+import { likePattern, parseId } from '../utils/queryHelpers.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const UPLOAD_FILE_FIELDS = [
+  'studentPhoto',
+  'parentPhoto',
+  'tenthCertificate',
+  'paymentReceipt',
+  'aadharCard',
+];
 
-function buildParentRegistrationSms(student) {
-  const name = String(student?.studentName || 'Student').trim();
-  const year = String(student?.year || '').trim();
-  const id = student?.rollNumber
-    ? String(student.rollNumber).trim()
-    : 'Admission / roll on record';
-  return `SAHE Hostelers: Dear Parent, ${name}'s hostel registration is confirmed. Year: ${year}. ID: ${id}. Thank you.`;
+const REQUIRED_UPLOAD_FIELDS_ALL = new Set([
+  'studentPhoto',
+  'parentPhoto',
+  'tenthCertificate',
+]);
+
+function getRequiredUploadFields(year) {
+  const required = new Set(REQUIRED_UPLOAD_FIELDS_ALL);
+  if (year === '1st Year') {
+    required.add('aadharCard');
+  }
+  return required;
+}
+
+/** @returns {{ fileData?: Record<string, string>, error?: string }} */
+function buildFileDataFromRequest(req, { requireAll = false, year } = {}) {
+  const fileData = {};
+  const requiredFields = requireAll ? getRequiredUploadFields(year) : new Set();
+  if (!req.files) {
+    if (requireAll && requiredFields.size > 0) {
+      return { error: 'Missing required file uploads.' };
+    }
+    return { fileData };
+  }
+
+  for (const field of UPLOAD_FILE_FIELDS) {
+    if (req.files[field]?.[0]) {
+      fileData[field] = req.files[field][0].filename;
+    } else if (requiredFields.has(field)) {
+      return { error: `Missing required file: ${field}` };
+    }
+  }
+
+  return { fileData };
+}
+
+function deleteStoredUpload(filename) {
+  if (!filename) return;
+  try {
+    const fullPath = path.join(UPLOADS_DIR, path.basename(filename));
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+    }
+  } catch (error) {
+    console.error('Error deleting upload:', error);
+  }
+}
+
+function removeReplacedUploads(existingStudent, fileData) {
+  for (const [field, newFilename] of Object.entries(fileData)) {
+    const previous = existingStudent?.[field];
+    if (previous && previous !== newFilename) {
+      deleteStoredUpload(previous);
+    }
+  }
 }
 
 /** Non-blocking; failures are logged only (registration still succeeds). */
 function notifyParentRegistrationSms(studentDoc) {
-  if (!studentDoc?.parentPhone || !isFast2smsConfigured()) return;
-  const msg = buildParentRegistrationSms(studentDoc);
-  void sendFast2sms(studentDoc.parentPhone, msg).then((r) => {
+  if (!studentDoc?.parentPhone || !isSalesquaredConfigured()) return;
+  const msg = buildSalesquaredRegistrationMessage(studentDoc);
+  void sendSalesquaredSms(studentDoc.parentPhone, msg).then((r) => {
     if (!r.ok) {
       console.warn(
         '[Registration SMS] Failed for parent phone:',
@@ -111,50 +171,55 @@ export const registerStudent = async (req, res) => {
     
     // Only check by roll number as primary key - no email checking
     if (rollNumber && rollNumber !== 'N/A' && rollNumber.trim() !== '') {
-      existingStudent = await Student.findOne({ rollNumber: rollNumber });
+      existingStudent = await Student.findOne({ where: { rollNumber } });
       if (existingStudent) {
-        
-        // Update existing student by roll number (primary key)
-        const updatedStudent = await Student.findByIdAndUpdate(
-          existingStudent._id,
-          {
-            studentName,
-            fatherName,
-            ...(motherTrimmed ? { motherName: motherTrimmed } : {}),
-            dateOfBirth,
-            gender,
-            branch,
-            year,
-            section,
-            backlogs,
-            cgpa,
-            rollNumber: rollNumber || null,
-            email,
-            phone,
-            address,
-            parentPhone,
-            parentOccupation,
-            guardianName,
-            guardianPhone,
-            feeAmount,
-            bloodGroup,
-            emergencyContact,
-            paymentStatus,
-            pendingAmount: paymentStatus === 'Done' ? null : pendingAmountParsed,
-            hasHealthIssues,
-            aadharNumber,
-            updatedAt: new Date()
-          },
-          { new: true, runValidators: true }
-        );
+        const { fileData, error: fileError } = buildFileDataFromRequest(req, {
+          requireAll: false,
+        });
+        if (fileError) {
+          return res.status(400).json({ success: false, error: fileError });
+        }
 
+        if (Object.keys(fileData).length > 0) {
+          removeReplacedUploads(existingStudent, fileData);
+        }
 
-        notifyParentRegistrationSms(updatedStudent);
+        await existingStudent.update({
+          studentName,
+          fatherName,
+          ...(motherTrimmed ? { motherName: motherTrimmed } : {}),
+          dateOfBirth,
+          gender,
+          branch,
+          year,
+          section,
+          backlogs,
+          cgpa,
+          rollNumber: rollNumber || null,
+          email,
+          phone,
+          address,
+          parentPhone,
+          parentOccupation,
+          guardianName,
+          guardianPhone,
+          feeAmount,
+          bloodGroup,
+          emergencyContact,
+          paymentStatus,
+          pendingAmount: paymentStatus === 'Done' ? null : pendingAmountParsed,
+          hasHealthIssues,
+          aadharNumber,
+          ...fileData,
+        });
+
+        await existingStudent.reload();
+        notifyParentRegistrationSms(existingStudent);
 
         return res.status(200).json({
           success: true,
           message: 'Registration updated successfully!',
-          data: updatedStudent
+          data: toApiJson(existingStudent),
         });
       }
     }
@@ -197,30 +262,12 @@ export const registerStudent = async (req, res) => {
       }
     }
     
-    // Handle file uploads
-    const fileData = {};
-    if (req.files) {
-      
-      const fileFields = [
-        'studentPhoto',
-        'parentPhoto',
-        'tenthCertificate',
-        'paymentReceipt',
-        'aadharCard'
-      ];
-      
-      fileFields.forEach(field => {
-        if (req.files[field] && req.files[field][0]) {
-          fileData[field] = req.files[field][0].filename;
-        } else if (field !== 'paymentReceipt') { // paymentReceipt is optional
-          if (field !== 'paymentReceipt') {
-            return res.status(400).json({
-              success: false,
-              error: `Missing required file: ${field}`
-            });
-          }
-        }
-      });
+    const { fileData, error: fileError } = buildFileDataFromRequest(req, {
+      requireAll: true,
+      year,
+    });
+    if (fileError) {
+      return res.status(400).json({ success: false, error: fileError });
     }
 
     // Prepare student data (omit motherName when absent so schema default applies)
@@ -264,7 +311,7 @@ export const registerStudent = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Student registered successfully!',
-      data: student
+      data: toApiJson(student),
     });
   } catch (error) {
     console.error(error);
@@ -281,133 +328,117 @@ export const registerStudent = async (req, res) => {
 export const getStudents = async (req, res) => {
   try {
     const { search, branch, paymentStatus, page = 1, limit = 20 } = req.query;
-    const query = {};
+    const where = {};
 
-    // Search by name, roll number, phone, or email
     if (search) {
       const term = String(search).trim();
-      const rx = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-      query.$or = [
-        { studentName: rx },
-        { rollNumber: rx },
-        { phone: rx },
-        { email: rx },
+      where[Op.or] = [
+        { studentName: likePattern(term) },
+        { rollNumber: likePattern(term) },
+        { phone: likePattern(term) },
+        { email: likePattern(term) },
       ];
     }
 
-    // Filter by branch
-    if (branch) {
-      query.branch = branch;
-    }
+    if (branch) where.branch = branch;
+    if (paymentStatus) where.paymentStatus = paymentStatus;
 
-    // Filter by payment status
-    if (paymentStatus) {
-      query.paymentStatus = paymentStatus;
-    }
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.max(1, Number(limit) || 20);
+    const offset = (pageNum - 1) * limitNum;
 
-    const students = await Student.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .select('studentName phone branch paymentStatus pendingAmount rollNumber year');
-    
-
-    const count = await Student.countDocuments(query);
+    const { rows: students, count } = await Student.findAndCountAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      limit: limitNum,
+      offset,
+      attributes: [
+        'id',
+        'studentName',
+        'phone',
+        'branch',
+        'paymentStatus',
+        'pendingAmount',
+        'rollNumber',
+        'year',
+        'createdAt',
+        'updatedAt',
+      ],
+    });
 
     res.status(200).json({
       success: true,
-      totalPages: Math.ceil(count / limit),
-      currentPage: page,
+      totalPages: Math.ceil(count / limitNum),
+      currentPage: pageNum,
       count,
-      data: students
+      data: toApiJsonList(students),
     });
   } catch (error) {
     console.error(error);
     res.status(500).json({
       success: false,
-      error: 'Server Error'
+      error: 'Server Error',
     });
   }
 };
 
-// @desc    Get single student
-// @route   GET /api/students/:id
-// @access  Public
 export const getStudent = async (req, res) => {
   try {
-    const student = await Student.findById(req.params.id);
-    
+    const id = parseId(req.params.id);
+    const student = id ? await Student.findByPk(id) : null;
+
     if (!student) {
       return res.status(404).json({
         success: false,
-        error: 'Student not found'
+        error: 'Student not found',
       });
     }
 
     res.status(200).json({
       success: true,
-      data: student
+      data: toApiJson(student),
     });
   } catch (error) {
     console.error(error);
     res.status(500).json({
       success: false,
-      error: 'Server Error'
+      error: 'Server Error',
     });
   }
 };
 
-// @desc    Delete a student
-// @route   DELETE /api/students/:id
-// @access  Private
 export const deleteStudent = async (req, res) => {
-  
   try {
-    // First try to find and delete the student in one operation
-    const deletedStudent = await Student.findByIdAndDelete(req.params.id);
-    
+    const id = parseId(req.params.id);
+    const deletedStudent = id ? await Student.findByPk(id) : null;
+
     if (!deletedStudent) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: 'Student not found' 
+        error: 'Student not found',
       });
     }
 
-
-    // Delete files if they exist (only if student was found and deleted)
-    const deleteFile = (filePath) => {
-      if (filePath) {
-        try {
-          const fullPath = path.join(process.cwd(), filePath);
-          if (fs.existsSync(fullPath)) {
-            fs.unlinkSync(fullPath);
-          }
-        } catch (fileError) {
-          console.error('Error deleting file:', fileError);
-        }
-      }
-    };
-
-    // Delete all associated files
     const filesToDelete = [
       deletedStudent.studentPhoto,
       deletedStudent.parentPhoto,
       deletedStudent.tenthCertificate,
       deletedStudent.paymentReceipt,
-      deletedStudent.aadharCard
+      deletedStudent.aadharCard,
     ];
+    filesToDelete.forEach((filePath) => deleteStoredUpload(filePath));
 
-    filesToDelete.forEach(filePath => deleteFile(filePath));
+    await deletedStudent.destroy();
 
-    res.json({ 
+    res.json({
       success: true,
-      message: 'Student deleted successfully' 
+      message: 'Student deleted successfully',
     });
   } catch (error) {
     console.error('Error in deleteStudent:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to delete student. Please try again.'
+      error: 'Failed to delete student. Please try again.',
     });
   }
 };
@@ -440,26 +471,26 @@ export const loginStudent = async (req, res) => {
 
     // Find student by roll number and year
     
-    const student = await Student.findOne({ 
-      rollNumber: rollNumber.trim(),
-      year: year 
+    const student = await Student.findOne({
+      where: {
+        rollNumber: rollNumber.trim(),
+        year,
+      },
     });
 
     if (!student) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid roll/administration number or year. Please check your credentials and try again.'
+        message: 'Invalid roll/administration number or year. Please check your credentials and try again.',
       });
     }
 
-
-    // Create a proper JWT token
     const token = jwt.sign(
-      { 
-        id: student._id,
+      {
+        id: String(student.id),
         rollNumber: student.rollNumber,
         name: student.studentName,
-        year: student.year
+        year: student.year,
       },
       process.env.JWT_SECRET || 'fallback_secret_key_for_development',
       { expiresIn: '24h' }
@@ -470,13 +501,13 @@ export const loginStudent = async (req, res) => {
       message: 'Login successful',
       token,
       student: {
-        _id: student._id,
+        _id: String(student.id),
         studentName: student.studentName,
         rollNumber: student.rollNumber,
         year: student.year,
         email: student.email,
-        phone: student.phone
-      }
+        phone: student.phone,
+      },
     });
 
   } catch (error) {
@@ -503,26 +534,28 @@ export const verifyStudent = async (req, res) => {
       });
     }
 
-    const student = await Student.findOne({ 
-      email: { $regex: new RegExp(`^${email}$`, 'i') }, 
-      phone: phone 
-    }).select('-password');
+    const student = await Student.findOne({
+      where: {
+        email: email,
+        phone,
+      },
+    });
 
     if (!student) {
-      return res.status(200).json({ 
+      return res.status(200).json({
         success: false,
-        message: 'No student found with these credentials' 
+        message: 'No student found with these credentials',
       });
     }
 
     res.json({
       success: true,
       student: {
-        _id: student._id,
+        _id: String(student.id),
         email: student.email,
         name: student.studentName,
-        phone: student.phone
-      }
+        phone: student.phone,
+      },
     });
   } catch (error) {
     console.error('Error in verifyStudent:', error);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, User, FileText, CreditCard, CheckCircle2, Clock, ChevronRight, ChevronLeft, Upload, Heart, Home, GraduationCap, Users, AlertCircle, Loader2, X } from 'lucide-react';
+import { Camera, User, FileText, CreditCard, CheckCircle2, Clock, ChevronRight, ChevronLeft, ChevronDown, Upload, Heart, Home, GraduationCap, Users, AlertCircle, Loader2, X } from 'lucide-react';
 import ConfirmationDialog from './ConfirmationDialog';
 
 function normalizePhoneDigits(value) {
@@ -96,6 +96,107 @@ function FieldErrorMsg({ text }) {
   );
 }
 
+function SectionSelect({ value, onChange, options, selectStyle, placeholder = 'Select Section' }) {
+  const [open, setOpen] = useState(false);
+  const [hoveredValue, setHoveredValue] = useState(null);
+  const rootRef = useRef(null);
+  const menuItems = [{ label: placeholder, value: '' }, ...options.map((option) => ({ label: option, value: option }))];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocClick = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) setHoveredValue(null);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="student-reg-section-select" style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="student-reg-section-select-trigger"
+        style={{
+          ...selectStyle,
+          width: '100%',
+          textAlign: 'left',
+          backgroundColor: '#ffffff',
+          color: value ? '#0f172a' : '#0f172a',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+          boxSizing: 'border-box',
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span>{value || placeholder}</span>
+        <ChevronDown size={16} style={{ flexShrink: 0, color: '#0f172a' }} />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          className="student-reg-section-select-menu"
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            margin: 0,
+            padding: 0,
+            backgroundColor: '#ffffff',
+            border: '1px solid #64748b',
+            borderRadius: 0,
+            boxShadow: 'none',
+            listStyle: 'none',
+            zIndex: 100,
+            maxHeight: '240px',
+            overflowY: 'auto',
+          }}
+        >
+          {menuItems.map((item) => {
+            const isHighlighted = hoveredValue !== null
+              ? hoveredValue === item.value
+              : value === item.value;
+
+            return (
+              <li
+                key={item.value || '__placeholder__'}
+                role="option"
+                aria-selected={value === item.value}
+                onMouseEnter={() => setHoveredValue(item.value)}
+                onMouseLeave={() => setHoveredValue(null)}
+                onClick={() => {
+                  onChange(item.value);
+                  setOpen(false);
+                }}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: 'clamp(14px, 2.5vw, 15px)',
+                  lineHeight: 1.4,
+                  color: isHighlighted ? '#ffffff' : '#0f172a',
+                  backgroundColor: isHighlighted ? '#2563eb' : '#ffffff',
+                  cursor: 'pointer',
+                }}
+              >
+                {item.label}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const StudentRegister = ({ onRegistered }) => {
   const successRedirectTimerRef = useRef(null);
   const [currentStep, setCurrentStep] = useState(1);
@@ -142,6 +243,7 @@ const StudentRegister = ({ onRegistered }) => {
     studentPhoto: null,
     parentPhoto: null,
     tenthCertificate: null,
+    aadharCard: null,
     paymentReceipt: null
   });
 
@@ -149,8 +251,11 @@ const StudentRegister = ({ onRegistered }) => {
     studentPhoto: null,
     parentPhoto: null,
     tenthCertificate: null,
+    aadharCard: null,
     paymentReceipt: null
   });
+
+  const isFirstYearStudent = formData.year === '1st Year';
 
   useEffect(() => {
     setIsVisible(true);
@@ -172,7 +277,7 @@ const StudentRegister = ({ onRegistered }) => {
   ];
 
   const years = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
-  const sections = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const sections = ['A', 'B', 'C', 'D', 'E', 'F', 'NA'];
   const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
   const handleInputChange = (e) => {
@@ -188,13 +293,21 @@ const StudentRegister = ({ onRegistered }) => {
       return;
     }
 
-    // If year is being changed to 1st year, clear the cgpa field
-    if (name === 'year' && value === '1st Year') {
-      setFormData(prev => ({
-        ...prev,
-        [name]: value,
-        cgpa: '' // Clear CGPA when switching to 1st year
-      }));
+    if (name === 'year') {
+      if (value === '1st Year') {
+        setFormData(prev => ({
+          ...prev,
+          year: value,
+          cgpa: '',
+        }));
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          year: value,
+        }));
+        setFiles(prev => ({ ...prev, aadharCard: null }));
+        setPreviewUrls(prev => ({ ...prev, aadharCard: null }));
+      }
       return;
     }
 
@@ -339,6 +452,10 @@ const StudentRegister = ({ onRegistered }) => {
       }
     }
 
+    if (formData.year === '1st Year' && !files.aadharCard) {
+      alert('Please upload your Aadhar card photo');
+      return false;
+    }
 
     if (!isValidIndianMobile(formData.emergencyContact)) {
       alert(
@@ -415,9 +532,11 @@ const StudentRegister = ({ onRegistered }) => {
           }) === null;
         return (
           formData.bloodGroup &&
+          formData.aadharNumber &&
           receiptOk &&
           pendingOk &&
           emergencyOk &&
+          (formData.year !== '1st Year' || files.aadharCard) &&
           formData.hasHealthIssues !== '' &&
           (formData.hasHealthIssues === 'no' ||
             (formData.hasHealthIssues === 'yes' && formData.healthIssuesDescription))
@@ -485,11 +604,11 @@ const StudentRegister = ({ onRegistered }) => {
     });
     setFiles({
       studentPhoto: null, parentPhoto: null,
-      tenthCertificate: null, paymentReceipt: null
+      tenthCertificate: null, aadharCard: null, paymentReceipt: null
     });
     setPreviewUrls({
       studentPhoto: null, parentPhoto: null,
-      tenthCertificate: null, paymentReceipt: null
+      tenthCertificate: null, aadharCard: null, paymentReceipt: null
     });
     setCurrentStep(1);
     setSubmitStatus(null);
@@ -545,6 +664,9 @@ const StudentRegister = ({ onRegistered }) => {
       }
       if (files.tenthCertificate) {
         formDataToSend.append('tenthCertificate', files.tenthCertificate);
+      }
+      if (formData.year === '1st Year' && files.aadharCard) {
+        formDataToSend.append('aadharCard', files.aadharCard);
       }
       if (files.paymentReceipt) {
         formDataToSend.append('paymentReceipt', files.paymentReceipt);
@@ -793,6 +915,17 @@ const StudentRegister = ({ onRegistered }) => {
           outline: none;
         }
 
+        .student-reg-root .student-reg-form,
+        .student-reg-root .student-reg-section,
+        .student-reg-root .student-reg-grid {
+          overflow: visible;
+        }
+
+        .student-reg-section-select-trigger {
+          appearance: none;
+          -webkit-appearance: none;
+        }
+
         /* Mobile-friendly registration layout */
         @media (max-width: 640px) {
           .student-reg-root .student-reg-hero {
@@ -899,7 +1032,7 @@ const StudentRegister = ({ onRegistered }) => {
                 <div style={{...styles.stepCircle, ...(currentStep >= 2 ? styles.stepCircleActive : {})}}>
                   <Home size={20} />
                 </div>
-                <span style={styles.stepLabel}>Room & Health</span>
+                <span style={styles.stepLabel}>Health & Payment</span>
               </div>
             </div>
           </div>
@@ -1089,18 +1222,12 @@ const StudentRegister = ({ onRegistered }) => {
 
                     <div style={styles.inputGroup}>
                       <label style={styles.label}>Section *</label>
-                      <select
-                        name="section"
+                      <SectionSelect
                         value={formData.section}
-                        onChange={handleInputChange}
-                        style={styles.select}
-                        required
-                      >
-                        <option value="">Select Section</option>
-                        {sections.map(section => (
-                          <option key={section} value={section}>{section}</option>
-                        ))}
-                      </select>
+                        onChange={(section) => setFormData((prev) => ({ ...prev, section }))}
+                        options={sections}
+                        selectStyle={styles.select}
+                      />
                     </div>
 
                     <div style={styles.inputGroup}>
@@ -1353,8 +1480,8 @@ const StudentRegister = ({ onRegistered }) => {
             {currentStep === 2 && (
               <div style={styles.formStep} className={isVisible ? 'fade-in-up' : ''}>
                 <div className="student-reg-step-head" style={styles.stepHeader}>
-                  <h2 className="student-reg-step-title" style={styles.stepTitle}>Room & Health Details</h2>
-                  <p style={styles.stepDescription}>Choose your room preference and provide health information</p>
+                  <h2 className="student-reg-step-title" style={styles.stepTitle}>Health & Payment Details</h2>
+                  <p style={styles.stepDescription}>Provide health information and payment details</p>
                 </div>
 
                 {/* Health Information */}
@@ -1483,6 +1610,38 @@ const StudentRegister = ({ onRegistered }) => {
                         maxLength="12"
                         pattern="[0-9]{12}"
                       />
+
+                      {isFirstYearStudent && (
+                        <label
+                          className="student-reg-aadhar-upload"
+                          style={styles.aadharUploadBox}
+                        >
+                          <input
+                            type="file"
+                            name="aadharCard"
+                            onChange={handleFileChange}
+                            accept="image/*,.pdf"
+                            style={styles.fileInput}
+                            required
+                          />
+                          {previewUrls.aadharCard ? (
+                            <img
+                              src={previewUrls.aadharCard}
+                              alt="Aadhar"
+                              style={styles.aadharPreviewImage}
+                            />
+                          ) : (
+                            <CreditCard size={18} style={styles.uploadIcon} />
+                          )}
+                          <div style={styles.aadharUploadText}>
+                            <span style={styles.aadharUploadTitle}>Aadhar Card Photo *</span>
+                            <span style={styles.aadharUploadSubtitle}>PDF, JPG, PNG (max 5MB)</span>
+                            {files.aadharCard && (
+                              <span style={styles.aadharFileName}>{files.aadharCard.name}</span>
+                            )}
+                          </div>
+                        </label>
+                      )}
                     </div>
                   </div>
 
@@ -1942,6 +2101,50 @@ const styles = {
     width: '100%',
     height: '100%',
     objectFit: 'cover',
+  },
+  aadharUploadBox: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginTop: '10px',
+    padding: '10px 12px',
+    border: '1.5px dashed #cbd5e1',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    backgroundColor: '#f8fafc',
+    maxWidth: '100%',
+  },
+  aadharPreviewImage: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '6px',
+    objectFit: 'cover',
+    flexShrink: 0,
+  },
+  aadharUploadText: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    minWidth: 0,
+  },
+  aadharUploadTitle: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#334155',
+    lineHeight: 1.3,
+  },
+  aadharUploadSubtitle: {
+    fontSize: '11px',
+    color: '#64748b',
+    lineHeight: 1.3,
+  },
+  aadharFileName: {
+    fontSize: '11px',
+    color: '#3b82f6',
+    fontWeight: '500',
+    wordBreak: 'break-all',
+    lineHeight: 1.3,
   },
   roomGrid: {
     display: 'grid',

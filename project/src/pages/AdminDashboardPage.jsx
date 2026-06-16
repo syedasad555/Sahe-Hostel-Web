@@ -370,8 +370,8 @@ const AdminDashboardPage = () => {
           </h2>
           <div className="flex flex-wrap gap-3">
             {[
-              { key: 'mongodb', label: 'MongoDB' },
-              { key: 'fast2sms', label: 'Fast2SMS' },
+              { key: 'mysql', label: 'MySQL' },
+              { key: 'salesquared', label: 'SaleSquared SMS' },
               { key: 'email', label: 'Email' },
               { key: 'jwtSecretSet', label: 'JWT secret' },
             ].map(({ key, label }) => (

@@ -1,10 +1,9 @@
 import Complaint from '../models/Complaint.js';
+import { toApiJson, toApiJsonList } from '../utils/apiSerialize.js';
+import { parseId } from '../utils/queryHelpers.js';
 
 const STATUS_VALUES = ['open', 'in_review', 'resolved'];
 
-// @desc    Submit a hostel complaint
-// @route   POST /api/complaints
-// @access  Public
 export const createComplaint = async (req, res) => {
   try {
     const { name, rollNumber, phone, message } = req.body || {};
@@ -26,27 +25,21 @@ export const createComplaint = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Your complaint has been submitted. We will get back to you soon.',
-      id: complaint._id,
+      id: String(complaint.id),
     });
   } catch (error) {
     console.error('createComplaint:', error);
     return res.status(500).json({
       success: false,
-      message:
-        error.name === 'MongoServerError' || error.name === 'MongooseError'
-          ? 'Database unavailable. Please try again later.'
-          : 'Could not submit complaint. Please try again later.',
+      message: 'Could not submit complaint. Please try again later.',
     });
   }
 };
 
-// @desc    List complaints (newest first)
-// @route   GET /api/complaints
-// @access  Faculty
 export const getComplaints = async (req, res) => {
   try {
-    const complaints = await Complaint.find().sort({ createdAt: -1 }).lean();
-    return res.json({ success: true, data: complaints });
+    const complaints = await Complaint.findAll({ order: [['createdAt', 'DESC']] });
+    return res.json({ success: true, data: toApiJsonList(complaints) });
   } catch (error) {
     console.error('getComplaints:', error);
     return res.status(500).json({
@@ -56,9 +49,6 @@ export const getComplaints = async (req, res) => {
   }
 };
 
-// @desc    Update complaint status
-// @route   PATCH /api/complaints/:id
-// @access  Faculty
 export const updateComplaintStatus = async (req, res) => {
   try {
     const { status } = req.body || {};
@@ -69,17 +59,16 @@ export const updateComplaintStatus = async (req, res) => {
       });
     }
 
-    const complaint = await Complaint.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true, runValidators: true }
-    );
-
+    const id = parseId(req.params.id);
+    const complaint = id ? await Complaint.findByPk(id) : null;
     if (!complaint) {
       return res.status(404).json({ success: false, message: 'Complaint not found.' });
     }
 
-    return res.json({ success: true, data: complaint });
+    complaint.status = status;
+    await complaint.save();
+
+    return res.json({ success: true, data: toApiJson(complaint) });
   } catch (error) {
     console.error('updateComplaintStatus:', error);
     return res.status(500).json({

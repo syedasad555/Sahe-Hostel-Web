@@ -4,15 +4,9 @@
  *
  * Usage (from project/server):
  *   npm run seed-faculty
- *
- * Required in .env:
- *   FACULTY_SEED_EMAIL, FACULTY_SEED_PASSWORD, FACULTY_SEED_NAME,
- *   FACULTY_SEED_EMPLOYEE_ID, FACULTY_SEED_DEPARTMENT, FACULTY_SEED_PHONE
- *
- * Optional: FACULTY_SEED_RESET=true to clear all faculty before seeding (dev only).
  */
 import '../config/loadEnv.js';
-import mongoose from 'mongoose';
+import connectDB, { sequelize } from '../config/db.js';
 import Faculty from '../models/Faculty.js';
 
 function requireEnv(name) {
@@ -43,15 +37,14 @@ const seedFaculty = async () => {
   }
 
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/hostel-management');
-    console.log('Connected to MongoDB');
+    await connectDB();
 
     if (process.env.FACULTY_SEED_RESET === 'true') {
-      await Faculty.deleteMany({});
-      console.log('Cleared existing faculty collection (FACULTY_SEED_RESET=true).');
+      await Faculty.destroy({ where: {}, truncate: false });
+      console.log('Cleared existing faculty records (FACULTY_SEED_RESET=true).');
     }
 
-    const existing = await Faculty.findOne({ email });
+    const existing = await Faculty.findOne({ where: { email } });
     if (existing) {
       console.log(`Faculty already exists for ${email}. No changes made.`);
       return;
@@ -75,7 +68,7 @@ const seedFaculty = async () => {
     console.error('Error seeding faculty:', error.message);
     process.exit(1);
   } finally {
-    await mongoose.connection.close();
+    await sequelize.close();
     console.log('Database connection closed');
   }
 };

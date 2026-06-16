@@ -11,6 +11,12 @@ dist
 dist-ssr
 *.local
 
+# Deployment runtime data and secrets
+.env
+.env.*
+!.env.production.example
+data/
+
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -20,4 +26,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.env

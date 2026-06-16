@@ -1,16 +1,11 @@
 /**
- * Reset a faculty password in MongoDB (forgot-password recovery).
+ * Reset a faculty password in MySQL (forgot-password recovery).
  *
  * Usage (from project/server):
  *   node scripts/resetFacultyPassword.js <email> <newPassword>
- *
- * Example:
- *   node scripts/resetFacultyPassword.js faculty@yourcollege.edu "MyNewSecurePass1!"
- *
- * Requires MONGODB_URI in .env (same as the main app).
  */
-import mongoose from 'mongoose';
 import '../config/loadEnv.js';
+import connectDB, { sequelize } from '../config/db.js';
 import Faculty from '../models/Faculty.js';
 
 const [, , emailArg, newPasswordArg] = process.argv;
@@ -29,13 +24,10 @@ async function main() {
     process.exit(1);
   }
 
-  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/hostel-management';
-
   try {
-    await mongoose.connect(uri);
-    console.log('Connected to MongoDB');
+    await connectDB();
 
-    const faculty = await Faculty.findOne({ email });
+    const faculty = await Faculty.findOne({ where: { email } });
     if (!faculty) {
       console.error(`No faculty found with email: ${email}`);
       process.exit(1);
@@ -49,7 +41,7 @@ async function main() {
     console.error('Error:', err.message);
     process.exit(1);
   } finally {
-    await mongoose.connection.close();
+    await sequelize.close();
     console.log('Connection closed');
   }
 }

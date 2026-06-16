@@ -1776,7 +1776,7 @@ function OutgoingServicesPanel({ navigate }) {
                                 <div className="space-y-0.5">
                                   <span
                                     className="text-red-700 font-semibold cursor-help border-b border-dotted border-red-400"
-                                    title={x.feedback || 'SMS was not accepted by Fast2SMS. Hover for details or check server logs.'}
+                                    title={x.feedback || 'SMS was not accepted by SaleSquared. Hover for details or check server logs.'}
                                   >
                                     Failed
                                   </span>

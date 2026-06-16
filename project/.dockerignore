@@ -1,0 +1,50 @@
+# Dependencies and build output
+node_modules
+server/node_modules
+dist
+dist-ssr
+
+# Persistent runtime data — never bake into images
+uploads
+data
+
+# Secrets and local env
+.env
+.env.*
+!.env.production.example
+server/.env
+server/.env.*
+
+# Git and IDE
+.git
+.gitignore
+.github
+.vscode
+.idea
+.bolt
+*.swp
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs and debug
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS and archives
+.DS_Store
+Thumbs.db
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Documentation not needed at runtime
+DEPLOYMENT.md
+README.md

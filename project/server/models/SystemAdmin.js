@@ -1,12 +1,1 @@
-import mongoose from 'mongoose';
-
-const systemAdminSchema = new mongoose.Schema(
-  {
-    email: { type: String, required: true, unique: true, trim: true, lowercase: true },
-    passwordHash: { type: String, required: true },
-  },
-  { timestamps: true }
-);
-
-export default mongoose.model('SystemAdmin', systemAdminSchema);
-
+export { SystemAdmin as default } from './index.js';
